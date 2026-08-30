@@ -131,9 +131,39 @@ def _random_cost(rng: random.Random) -> str:
     return text
 
 
+def _resolution_hours(category: str, priority: str, rng: random.Random) -> int:
+    """Horas hasta resolución, causalmente ligadas a categoría y prioridad -- no
+    ruido independiente -- para que un modelo de pronóstico downstream (ver
+    `src/models/forecast_response_time.py`) tenga una señal real que recuperar,
+    en vez de ajustar contra ruido puro. Base por categoría (Billing/Account se
+    resuelven rápido, suelen ser administrativos; Bug Report/Feature Request son
+    trabajo de ingeniería, tardan más) x multiplicador por prioridad (Critical se
+    escala y se resuelve rápido; Low se posterga), con ruido log-normal multiplicativo
+    encima para variabilidad realista entre tickets similares.
+    """
+    base_hours = {
+        "Billing": 8.0,
+        "Account": 12.0,
+        "Technical": 30.0,
+        "Bug Report": 48.0,
+        "Feature Request": 60.0,
+    }[category]
+    priority_multiplier = {"Critical": 0.3, "High": 0.6, "Medium": 1.0, "Low": 1.8}[priority]
+
+    noise = rng.lognormvariate(0, 0.5)
+    hours = base_hours * priority_multiplier * noise
+    return max(1, min(240, round(hours)))
+
+
 def _fresh_ticket(ticket_id: str, rng: random.Random) -> dict:
     created = _random_date(rng)
-    resolved = created + pd.Timedelta(hours=rng.randint(1, 240)) if rng.random() > 0.08 else None
+    base_priority = rng.choice(PRIORITIES)
+    base_category = rng.choice(CATEGORIES)
+    resolved = (
+        created + pd.Timedelta(hours=_resolution_hours(base_category, base_priority, rng))
+        if rng.random() > 0.08
+        else None
+    )
 
     row = {
         "ticket_id": ticket_id,
@@ -141,9 +171,9 @@ def _fresh_ticket(ticket_id: str, rng: random.Random) -> dict:
         "customer_email": f"user{rng.randint(0, 999_999)}@{rng.choice(DOMAINS)}",
         "created_at": _format_date_messy(created, rng),
         "resolved_at": _format_date_messy(resolved, rng) if resolved is not None else rng.choice(NULL_LIKE_STRINGS),
-        "priority": rng.choice(PRIORITIES + [p.lower() for p in PRIORITIES] + [p.upper() for p in PRIORITIES]),
+        "priority": rng.choice([base_priority, base_priority.lower(), base_priority.upper()]),
         "status": rng.choice(STATUSES),
-        "category": rng.choice(CATEGORIES),
+        "category": base_category,
         "agent_name": rng.choice(AGENTS),
         "cost": _random_cost(rng),
         "user_metadata": _random_metadata(rng),
