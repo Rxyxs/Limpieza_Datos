@@ -1,97 +1,138 @@
+[ 🇺🇸 English ] | [ 🇨🇱 [Leer en Español](README.es.md) ]
+
 # IT Data Wrangling Pipeline
 
-Proyecto de **Ingeniería y Limpieza de Datos Avanzada** aplicado a operaciones de soporte TI/SaaS. Genera un dataset sintético de tickets de soporte con los defectos típicos de datos reales de producción, y lo convierte en un dataset limpio, tipado y validado mediante un pipeline modular de limpieza.
+![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)
+![pandas](https://img.shields.io/badge/pandas-data%20wrangling-150458?logo=pandas&logoColor=white)
+![pydantic](https://img.shields.io/badge/pydantic-schema%20validation-E92063)
+![rapidfuzz](https://img.shields.io/badge/rapidfuzz-fuzzy%20matching-4C7A3E)
+![Tests](https://img.shields.io/badge/tests-18%20passing-brightgreen?logo=pytest&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-## Objetivo
+Advanced **Data Engineering & Cleaning** project applied to IT/SaaS support operations. Generates a synthetic support-ticket dataset with the defects typical of real production data, and turns it into a clean, typed, validated dataset via a modular cleaning pipeline.
 
-Los datos de operaciones TI casi nunca llegan limpios: distintos sistemas de origen escriben fechas en formatos diferentes, los campos de texto libre acumulan typos y duplicados, los montos llegan en el formato de moneda de quien los ingresó, y los payloads JSON de metadata varían de forma libre entre eventos. Este proyecto demuestra un pipeline profesional para llevar ese tipo de datos "sucios" a un esquema limpio, validado y listo para análisis o carga a un data warehouse — separando explícitamente lo que se puede corregir de lo que debe quedar marcado como inválido para revisión humana, en vez de forzar un valor inventado.
+## Business Impact & Key Performance Indicators
 
-## Arquitectura del proyecto
+Numbers from a real run (`python -m src.pipeline`, 10,000-ticket dataset from `dirty_data_generator.py`):
+
+| Metric | Result | What it means |
+|---|---|---|
+| Rows processed | 9,950 (of 10,000 generated) | Fuzzy company-name deduplication collapsed duplicate-with-variation rows before validation |
+| Valid rows after cleaning | 8,401 (84.4%) | Pass the full `pydantic` schema: types, email format, closed vocabulary, plausible cost range |
+| Invalid rows, surfaced for review | 1,549 (15.6%), reason logged | Nothing is silently dropped -- every rejected row carries its `validation_error` for audit |
+| Test suite | 18/18 passing | One unit test per cleaning module (`json_normalizer`, `datetime_cleaner`, `string_cleaner`, `missing_data_imputer`) |
+
+## Goal
+
+IT operations data almost never arrives clean: different source systems write dates in different formats, free-text fields accumulate typos and duplicates, amounts arrive in whichever currency format the entering system used, and metadata JSON payloads vary freely event to event. This project demonstrates a professional pipeline for turning that kind of "dirty" data into a clean, validated schema ready for analysis or a data-warehouse load — explicitly separating what can be corrected from what must be flagged invalid for human review, rather than forcing a made-up value.
+
+## Project Architecture
+
+```mermaid
+flowchart LR
+    A[dirty_data_generator.py<br/>10,000 dirty tickets] --> B[json_normalizer.py]
+    B --> C[datetime_cleaner.py]
+    C --> D[string_cleaner.py]
+    D --> E[missing_data_imputer.py]
+    E --> F["schema_validator.py<br/>pydantic CleanTicketSchema"]
+    F --> G[(clean_it_tickets.csv<br/>8,401 valid rows)]
+    F --> H[(invalid_it_tickets.csv<br/>1,549 rows + reason)]
+```
 
 ```
 it-data-wrangling-pipeline/
 ├── data/
-│   ├── raw/                          # messy_it_tickets.csv (generado, no versionado)
-│   └── processed/                    # clean_it_tickets.csv + invalid_it_tickets.csv (no versionados)
+│   ├── raw/                          # messy_it_tickets.csv (generated, not tracked)
+│   └── processed/                    # clean_it_tickets.csv + invalid_it_tickets.csv (not tracked)
 ├── notebooks/
-│   └── 01_dirty_data_eda.ipynb       # Diagnóstico de los defectos del dataset crudo
+│   └── 01_dirty_data_eda.ipynb       # Diagnosis of the raw dataset's defects
 ├── src/
 │   ├── generators/
-│   │   └── dirty_data_generator.py   # Genera el dataset sintético sucio
+│   │   └── dirty_data_generator.py   # Generates the synthetic dirty dataset
 │   ├── cleaners/
-│   │   ├── json_normalizer.py        # Aplana JSON anidado de profundidad variable
-│   │   ├── datetime_cleaner.py       # Normaliza fechas/timezones a UTC ISO 8601
-│   │   ├── string_cleaner.py         # Espacios, monedas, unificación fuzzy de nombres
-│   │   └── missing_data_imputer.py   # Media condicional por categoría / interpolación
+│   │   ├── json_normalizer.py        # Flattens variable-depth nested JSON
+│   │   ├── datetime_cleaner.py       # Normalizes dates/timezones to UTC ISO 8601
+│   │   ├── string_cleaner.py         # Whitespace, currencies, fuzzy name unification
+│   │   └── missing_data_imputer.py   # Conditional-mean / linear-interpolation imputation
 │   ├── validators/
-│   │   └── schema_validator.py       # Esquema pydantic: separa filas válidas de inválidas
-│   └── pipeline.py                   # Orquesta el flujo completo crudo -> limpio
+│   │   └── schema_validator.py       # pydantic schema: separates valid from invalid rows
+│   └── pipeline.py                   # Orchestrates the full raw -> clean flow
 ├── tests/
-│   └── test_cleaners.py              # Pruebas unitarias (pytest) de cada módulo de limpieza
+│   └── test_cleaners.py              # Unit tests (pytest) for each cleaning module
 ├── requirements.txt
-└── README.md
+├── LICENSE
+├── README.md
+└── README.es.md
 ```
 
-## Dataset sintético
+## Synthetic Dataset
 
-`src/generators/dirty_data_generator.py` produce `data/raw/messy_it_tickets.csv` con 10,000 tickets de soporte (~20 empresas cliente distintas) que incluyen intencionalmente:
+`src/generators/dirty_data_generator.py` produces `data/raw/messy_it_tickets.csv` with 10,000 support tickets (~20 distinct client companies) intentionally including:
 
-- **Fechas y timezones mezclados**: al menos 6 formatos de fecha distintos (ISO, `dd/mm/aaaa`, `mm/dd/aaaa` en 12h, nombre de mes, etc.) combinados con offsets numéricos y abreviaciones de timezone (`UTC`, `Z`, `EST`, `PST`, `CET`).
-- **`user_metadata`**: JSON anidado de profundidad variable (0 a 3 niveles), con listas, o vacío/`null`.
-- **Typos y duplicados de empresa**: mayúsculas/minúsculas inconsistentes, sufijos legales (`Inc.`, `LLC`, `Corp.`), espacios dobles, sustitución de caracteres, y filas duplicadas-con-variación que representan doble captura del mismo ticket.
-- **Monedas mezcladas**: `"$1,200.50"` (formato US), `"1200,50 €"` (formato europeo), código de moneda como sufijo (`"1,050.75 USD"`), y algunos reembolsos negativos.
-- **Faltantes inconsistentes**: `NaN` real, strings placeholder (`"null"`, `"N/A"`, `"-"`, `"?"`), y filas completamente vacías simulando exports corruptos.
+- **Mixed dates and timezones**: at least 6 distinct date formats (ISO, `dd/mm/yyyy`, `mm/dd/yyyy` in 12h, month name, etc.) combined with numeric offsets and timezone abbreviations (`UTC`, `Z`, `EST`, `PST`, `CET`).
+- **`user_metadata`**: nested JSON of variable depth (0 to 3 levels), with lists, or empty/`null`.
+- **Company typos and duplicates**: inconsistent casing, legal suffixes (`Inc.`, `LLC`, `Corp.`), double spaces, character substitution, and duplicate-with-variation rows representing double-capture of the same ticket.
+- **Mixed currencies**: `"$1,200.50"` (US format), `"1200,50 €"` (European format), currency code as a suffix (`"1,050.75 USD"`), and some negative refunds.
+- **Inconsistent missingness**: real `NaN`, placeholder strings (`"null"`, `"N/A"`, `"-"`, `"?"`), and fully empty rows simulating corrupted exports.
 
-## Módulos de limpieza (`src/cleaners/`)
+## Cleaning Modules (`src/cleaners/`)
 
-| Módulo | Qué hace |
+| Module | What it does |
 |---|---|
-| `json_normalizer.py` | Aplana `user_metadata` a columnas planas (`user_metadata_browser_name`, etc.), tolerando cualquier profundidad y valores nulos/malformados. |
-| `datetime_cleaner.py` | Parsea cualquiera de los formatos/timezones del dataset y normaliza a UTC en ISO 8601. Limitación honesta y documentada: sin metadata de locale, una fecha como `"07/09/2024"` es genuinamente ambigua (día/mes vs. mes/día) — se asume un criterio consistente y solo se reintenta con el otro si el primero falla por completo. |
-| `string_cleaner.py` | Recorta/colapsa espacios, parsea montos con separador decimal mixto a `float`, normaliza capitalización de campos categóricos, y usa `rapidfuzz` (`fuzz.WRatio` + `utils.default_process`) para colapsar variantes/typos de un mismo nombre de empresa a un valor canónico. |
-| `missing_data_imputer.py` | Dos estrategias de imputación numérica: media condicional por categoría (`cost` según `category`) e interpolación lineal respetando orden temporal (`response_time_hours` según `created_at`). |
+| `json_normalizer.py` | Flattens `user_metadata` into flat columns (`user_metadata_browser_name`, etc.), tolerating any depth and null/malformed values. |
+| `datetime_cleaner.py` | Parses any of the dataset's formats/timezones and normalizes to UTC ISO 8601. Honest, documented limitation: without locale metadata, a date like `"07/09/2024"` is genuinely ambiguous (day/month vs. month/day) — a consistent convention is assumed, and only retried with the other one if the first fails outright. |
+| `string_cleaner.py` | Trims/collapses whitespace, parses amounts with mixed decimal separators to `float`, normalizes categorical-field casing, and uses `rapidfuzz` (`fuzz.WRatio` + `utils.default_process`) to collapse typo/variant company names to a canonical value. |
+| `missing_data_imputer.py` | Two numeric imputation strategies: category-conditional mean (`cost` by `category`) and linear interpolation respecting temporal order (`response_time_hours` by `created_at`). |
 
-Deliberadamente **no** todo faltante se imputa: nombre de empresa, agente o categoría faltante no tiene un valor "correcto" que inventar, así que esas filas quedan expuestas por el validador de esquema en vez de rellenarse con un placeholder silencioso.
+Deliberately **not** everything missing gets imputed: a missing company name, agent, or category has no "correct" value to invent, so those rows are surfaced by the schema validator instead of being filled with a silent placeholder.
 
-## Validación de esquema (`src/validators/schema_validator.py`)
+## Schema Validation (`src/validators/schema_validator.py`)
 
-Un modelo `pydantic` (`CleanTicketSchema`) define el contrato de una fila limpia: tipos, formato de email, vocabulario cerrado para `priority`/`status`/`category`, y rango plausible de `cost`. `validate_dataframe()` separa el DataFrame limpio en `(filas_válidas, filas_inválidas)` — esta última con una columna `validation_error` para auditoría, en vez de descartar silenciosamente los problemas que la limpieza automática no pudo resolver con confianza.
+A `pydantic` model (`CleanTicketSchema`) defines the contract for a clean row: types, email format, closed vocabulary for `priority`/`status`/`category`, and a plausible `cost` range. `validate_dataframe()` splits the cleaned DataFrame into `(valid_rows, invalid_rows)` — the latter carrying a `validation_error` column for audit, rather than silently discarding whatever automated cleaning couldn't resolve with confidence.
 
-## Instalación
+## Installation
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate      # En Windows: .venv\Scripts\activate
+source .venv/bin/activate      # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Uso
+## Usage
 
-Generar el dataset sucio:
+Generate the dirty dataset:
 
 ```bash
 python -m src.generators.dirty_data_generator
 ```
 
-Ejecutar el pipeline completo de limpieza:
+Run the full cleaning pipeline:
 
 ```bash
 python -m src.pipeline
 ```
 
-Descarga/genera nada por sí mismo — lee `data/raw/messy_it_tickets.csv`, aplica todos los cleaners en orden, imputa lo que se puede imputar con criterio, valida el esquema resultante, e imprime un resumen. Escribe `data/processed/clean_it_tickets.csv` (filas válidas) y `data/processed/invalid_it_tickets.csv` (filas rechazadas, con el motivo).
+Downloads/generates nothing on its own — it reads `data/raw/messy_it_tickets.csv`, applies every cleaner in order, imputes what can be reasonably imputed, validates the resulting schema, and prints a summary. Writes `data/processed/clean_it_tickets.csv` (valid rows) and `data/processed/invalid_it_tickets.csv` (rejected rows, with the reason).
 
-Pruebas unitarias:
+Unit tests:
 
 ```bash
 pytest tests/
 ```
 
-## Stack técnico
+## Tech Stack
 
-- **pandas / numpy** — manipulación y transformación de datos
-- **pydantic** — validación de esquema con tipado fuerte
-- **rapidfuzz** — coincidencia difusa para unificación de nombres
-- **openpyxl** — soporte de lectura/escritura de Excel
-- **matplotlib / seaborn** — visualización exploratoria
-- **pytest** — pruebas unitarias
+- **pandas / numpy** — data manipulation and transformation
+- **pydantic** — strongly-typed schema validation
+- **rapidfuzz** — fuzzy matching for name unification
+- **openpyxl** — Excel read/write support
+- **matplotlib / seaborn** — exploratory visualization
+- **pytest** — unit tests
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+## Author
+
+**Pablo Reyes** — [github.com/Rxyxs](https://github.com/Rxyxs)
