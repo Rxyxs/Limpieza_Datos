@@ -6,11 +6,12 @@
 ![pandas](https://img.shields.io/badge/pandas-data%20wrangling-150458?logo=pandas&logoColor=white)
 ![pydantic](https://img.shields.io/badge/pydantic-schema%20validation-E92063)
 ![rapidfuzz](https://img.shields.io/badge/rapidfuzz-fuzzy%20matching-4C7A3E)
-![scikit-learn](https://img.shields.io/badge/scikit--learn-RandomForest-F7931E?logo=scikitlearn&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-37%20passing-brightgreen?logo=pytest&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-RandomForest%20%7C%20MLP-F7931E?logo=scikitlearn&logoColor=white)
+![seaborn](https://img.shields.io/badge/seaborn-heatmaps-4C72B0)
+![Tests](https://img.shields.io/badge/tests-43%20passing-brightgreen?logo=pytest&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Proyecto de **Ingeniería y Limpieza de Datos Avanzada** aplicado a operaciones de soporte TI/SaaS. Genera un dataset sintético de tickets de soporte con los defectos típicos de datos reales de producción, y lo convierte en un dataset limpio, tipado, validado y listo para ML mediante un pipeline modular de limpieza -- cerrando el ciclo con un modelo de pronóstico baseline real entrenado sobre la propia salida del pipeline.
+Proyecto de **Ingeniería y Limpieza de Datos Avanzada** aplicado a operaciones de soporte TI/SaaS. Genera un dataset sintético de tickets de soporte con los defectos típicos de datos reales de producción, y lo convierte en un dataset limpio, tipado, validado y listo para ML mediante un pipeline modular de limpieza -- cerrando el ciclo con dos modelos downstream reales entrenados sobre la propia salida del pipeline: un regresor RandomForest que pronostica el tiempo de resolución, y un clasificador de red neuronal (ReLU vs. Tanh, comparados cara a cara) que predice incumplimiento de SLA.
 
 ## Impacto de Negocio e Indicadores Clave (KPIs)
 
@@ -24,7 +25,9 @@ Números de una corrida real (`python -m src.pipeline`, dataset de 10.000 ticket
 | Tickets casi-duplicados detectados | 285 pares candidatos | Mismo cliente + categoría, creados minutos aparte, nombre de empresa casi idéntico -- un patrón de doble-envío que el dedup exacto no atrapa |
 | Outliers winsorizados | 245 en `cost` (IQR global), 1.398 en `response_time_hours` (IQR por categoría) | Ver el hallazgo honesto sobre IQR vs. datos sesgados más abajo |
 | **Modelo de pronóstico (RandomForest) vs. baseline de media** | MAE 20,29h vs. 31,47h (**-35,5%**) | R²=0,380 -- el dataset limpio, filtrado y codificado lleva señal real y aprovechable para un modelo downstream |
-| Suite de tests | 37/37 pasando | Cubre los 9 módulos: generación, limpieza, tratamiento de outliers, detección de duplicados, filtrado, codificación, validación |
+| **Clasificador de incumplimiento de SLA (MLP, mejor activación)** | Tanh: F1 0,783, accuracy 82,6% | Le gana por poco a ReLU (F1 0,776) con arquitectura idéntica -- una comparación real y controlada, no afirmada |
+| Chequeo de correlación (sanidad) | `cost` r=0,008 vs. `priority_encoded` r=-0,359 con `response_time_hours` | Confirma en los datos crudos, antes de cualquier modelo, que costo no lleva señal real y prioridad sí -- exactamente como fue diseñado |
+| Suite de tests | 43/43 pasando | Cubre los 11 módulos: generación, limpieza, tratamiento de outliers, detección de duplicados, filtrado, codificación, validación, visualización, ambos modelos |
 
 ## Objetivo
 
@@ -46,6 +49,9 @@ flowchart LR
     I --> K[business_filters.py<br/>alcance resueltos + costo positivo]
     K --> L[feature_encoder.py<br/>ordinal + one-hot]
     L --> M["forecast_response_time.py<br/>RandomForestRegressor"]
+    L --> N["sla_breach_classifier.py<br/>MLPClassifier: ReLU vs Tanh"]
+    L --> O["plots.py<br/>heatmap de correlacion"]
+    N --> P[(confusion_matrix_relu.png<br/>confusion_matrix_tanh.png)]
 ```
 
 ```
@@ -70,10 +76,15 @@ it-data-wrangling-pipeline/
 │   ├── features/
 │   │   └── feature_encoder.py        # Codificación ordinal (prioridad) + one-hot (categoría/estado)
 │   ├── models/
-│   │   └── forecast_response_time.py # Baseline RandomForest vs. media, MAE/R²/importancia real
+│   │   ├── forecast_response_time.py # Baseline RandomForest vs. media, MAE/R²/importancia real
+│   │   └── sla_breach_classifier.py  # MLPClassifier ReLU vs. Tanh, matrices de confusión
+│   ├── visualization/
+│   │   └── plots.py                  # Heatmap de correlación + matrices de confusión
 │   ├── validators/
 │   │   └── schema_validator.py       # Esquema pydantic: separa filas válidas de inválidas
 │   └── pipeline.py                   # Orquesta el flujo completo crudo -> limpio -> listo-para-ML
+├── outputs/
+│   └── figures/                      # correlation_heatmap.png, confusion_matrix_{relu,tanh}.png (versionados)
 ├── tests/                            # Pruebas unitarias (pytest) de cada módulo de arriba
 ├── requirements.txt
 ├── LICENSE
@@ -136,6 +147,32 @@ Un `RandomForestRegressor` baseline real, entrenado sobre la salida limpia → f
 - **`cost` muestra importancia 0,282, casi empatada con `priority`, a pesar de no tener *ningún* vínculo causal con `response_time_hours` en el generador** (`cost` se genera de forma independiente). Es un artefacto conocido de la `feature_importances_` basada en impureza por defecto de scikit-learn, que sesga hacia features continuas de alta cardinalidad incluso cuando no llevan señal real -- documentado aquí en vez de confundido con un driver genuino. Un pase de importancia por permutación o SHAP sería el siguiente paso correcto para confirmar la contribución real (cercana a cero) de `cost`.
 - **El IQR por categoría igual winsoriza ~16% de los valores de `response_time_hours`**, más que el ~2,5% de `cost` bajo un único IQR global. Pasar de IQR global a IQR por categoría (ver `outlier_handler.py`) arregló el problema peor (una regla global marcando categorías enteras de escala alta como anómalas), pero dentro de cada categoría el ruido multiplicativo log-normal usado para generar variabilidad realista ticket-a-ticket igual produce una cola derecha más pesada de lo que una regla IQR lineal espera -- una limitación real y documentada de los métodos basados en IQR sobre distribuciones sesgadas, no ajustada para que el número se vea mejor.
 
+## Heatmap de Correlación (`src/visualization/plots.py`)
+
+Antes de confiar en la importancia de features de cualquier modelo, vale la pena chequear las correlaciones crudas por pares directamente:
+
+![Heatmap de correlación](outputs/figures/correlation_heatmap.png)
+
+`priority_encoded` correlaciona en **-0,359** con `response_time_hours` (mayor prioridad → resolución más rápida, exactamente la dirección causal inyectada) y `category_Feature Request`/`Bug Report` correlacionan positivamente (+0,317/+0,180 -- categorías más lentas). `cost` correlaciona en **0,008**, esencialmente cero -- la misma conclusión que el artefacto de importancia de features del modelo de pronóstico (arriba) oscurecía, confirmada acá directamente desde los datos, antes de que intervenga cualquier modelo.
+
+## Clasificador de Incumplimiento de SLA: ReLU vs. Tanh (`src/models/sla_breach_classifier.py`)
+
+Un segundo modelo downstream, genuinamente distinto: en vez de pronosticar el número exacto de horas, este clasifica si un ticket va a **incumplir un SLA de 24 horas** (`response_time_hours > 24`) -- una decisión binaria que un gerente de soporte realmente acciona. Reutiliza las mismas features filtradas y codificadas del modelo de regresión de arriba, binarizando el target en vez de duplicar la lógica de preparación de datos.
+
+Dos arquitecturas `MLPClassifier` idénticas (`hidden_layer_sizes=(16, 8)`, mismo seed, mismo split train/test) se entrenan, difiriendo **solo** en la función de activación de la capa oculta -- el mismo patrón de comparación controlada usado en otro repositorio de este portafolio para funciones de activación, aplicado acá a una decisión real de operaciones de soporte en vez de dirección de precio.
+
+| Activación | Accuracy | Precisión | Recall | F1 |
+|---|---|---|---|---|
+| ReLU | 0,822 | 0,821 | 0,735 | 0,776 |
+| **Tanh** | **0,826** | 0,821 | **0,748** | **0,783** |
+
+Tanh gana por poco en todas las métricas excepto precisión (empate) -- reportado como el resultado real y cercano que es, no como una historia de victoria dramática. Train/test: 5.856 / 1.465 filas; tasa de incumplimiento de SLA 41,9% en ambos splits (estratificado).
+
+![Matriz de confusión, ReLU](outputs/figures/confusion_matrix_relu.png)
+![Matriz de confusión, Tanh](outputs/figures/confusion_matrix_tanh.png)
+
+Ambas matrices de confusión muestran el mismo patrón: la precisión en "Incumple SLA" es sólida (~0,82) pero el recall es el número más blando (~0,74) -- el modelo tiene más probabilidad de perderse un incumplimiento real que de dar una falsa alarma sobre un ticket que en realidad está bien, algo importante de saber antes de fijar un umbral de alerta desde este modelo en la práctica.
+
 ## Instalación
 
 ```bash
@@ -166,6 +203,18 @@ Entrenar y evaluar el modelo de pronóstico baseline (necesita `clean_it_tickets
 python -m src.models.forecast_response_time
 ```
 
+Entrenar y comparar el clasificador de incumplimiento de SLA (ReLU vs. Tanh), guardando ambas matrices de confusión:
+
+```bash
+python -m src.models.sla_breach_classifier
+```
+
+Generar el heatmap de correlación:
+
+```bash
+python -m src.visualization.plots
+```
+
 Pruebas unitarias:
 
 ```bash
@@ -177,9 +226,9 @@ pytest tests/
 - **pandas / numpy** — manipulación y transformación de datos
 - **pydantic** — validación de esquema con tipado fuerte
 - **rapidfuzz** — coincidencia difusa para unificación de nombres y detección de casi-duplicados
-- **scikit-learn** — modelo de pronóstico baseline RandomForest
+- **scikit-learn** — modelo de pronóstico baseline RandomForest, MLPClassifier (ReLU/Tanh) para incumplimiento de SLA
 - **openpyxl** — soporte de lectura/escritura de Excel
-- **matplotlib / seaborn** — visualización exploratoria
+- **matplotlib / seaborn** — heatmap de correlación, matrices de confusión, visualización exploratoria
 - **pytest** — pruebas unitarias
 
 ## Licencia

@@ -6,11 +6,12 @@
 ![pandas](https://img.shields.io/badge/pandas-data%20wrangling-150458?logo=pandas&logoColor=white)
 ![pydantic](https://img.shields.io/badge/pydantic-schema%20validation-E92063)
 ![rapidfuzz](https://img.shields.io/badge/rapidfuzz-fuzzy%20matching-4C7A3E)
-![scikit-learn](https://img.shields.io/badge/scikit--learn-RandomForest-F7931E?logo=scikitlearn&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-37%20passing-brightgreen?logo=pytest&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-RandomForest%20%7C%20MLP-F7931E?logo=scikitlearn&logoColor=white)
+![seaborn](https://img.shields.io/badge/seaborn-heatmaps-4C72B0)
+![Tests](https://img.shields.io/badge/tests-43%20passing-brightgreen?logo=pytest&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Advanced **Data Engineering & Cleaning** project applied to IT/SaaS support operations. Generates a synthetic support-ticket dataset with the defects typical of real production data, and turns it into a clean, typed, validated, ML-ready dataset via a modular cleaning pipeline — closing the loop with a real baseline forecasting model trained on the pipeline's own output.
+Advanced **Data Engineering & Cleaning** project applied to IT/SaaS support operations. Generates a synthetic support-ticket dataset with the defects typical of real production data, and turns it into a clean, typed, validated, ML-ready dataset via a modular cleaning pipeline — closing the loop with two real downstream models trained on the pipeline's own output: a RandomForest regressor forecasting resolution time, and a neural-network classifier (ReLU vs. Tanh, compared head-to-head) predicting SLA breach.
 
 ## Business Impact & Key Performance Indicators
 
@@ -24,7 +25,9 @@ Numbers from a real run (`python -m src.pipeline`, 10,000-ticket dataset from `d
 | Near-duplicate tickets flagged | 285 candidate pairs | Same customer + category, created minutes apart, near-identical company name -- a double-submission pattern exact dedup misses |
 | Outliers winsorized | 245 in `cost` (global IQR), 1,398 in `response_time_hours` (per-category IQR) | See the honest finding on IQR vs. skewed data below |
 | **Forecast model (RandomForest) vs. mean baseline** | MAE 20.29h vs. 31.47h (**-35.5%**) | R²=0.380 -- the cleaned, filtered, encoded dataset carries real, usable signal for a downstream model |
-| Test suite | 37/37 passing | Covers all 9 modules: generation, cleaning, outlier handling, duplicate detection, filtering, encoding, validation |
+| **SLA-breach classifier (MLP, best activation)** | Tanh: F1 0.783, accuracy 82.6% | Narrowly beats ReLU (F1 0.776) on identical architecture -- a real, controlled comparison, not asserted |
+| Correlation sanity check | `cost` r=0.008 vs. `priority_encoded` r=-0.359 with `response_time_hours` | Confirms in the raw data, before any model, that cost carries no real signal and priority does -- exactly as designed |
+| Test suite | 43/43 passing | Covers all 11 modules: generation, cleaning, outlier handling, duplicate detection, filtering, encoding, validation, visualization, both models |
 
 ## Goal
 
@@ -46,6 +49,9 @@ flowchart LR
     I --> K[business_filters.py<br/>resolved + positive-cost scope]
     K --> L[feature_encoder.py<br/>ordinal + one-hot]
     L --> M["forecast_response_time.py<br/>RandomForestRegressor"]
+    L --> N["sla_breach_classifier.py<br/>MLPClassifier: ReLU vs Tanh"]
+    L --> O["plots.py<br/>correlation heatmap"]
+    N --> P[(confusion_matrix_relu.png<br/>confusion_matrix_tanh.png)]
 ```
 
 ```
@@ -70,10 +76,15 @@ it-data-wrangling-pipeline/
 │   ├── features/
 │   │   └── feature_encoder.py        # Ordinal (priority) + one-hot (category/status) encoding
 │   ├── models/
-│   │   └── forecast_response_time.py # RandomForest baseline vs. mean, real MAE/R²/feature importance
+│   │   ├── forecast_response_time.py # RandomForest baseline vs. mean, real MAE/R²/feature importance
+│   │   └── sla_breach_classifier.py  # MLPClassifier ReLU vs. Tanh, confusion matrices
+│   ├── visualization/
+│   │   └── plots.py                  # Correlation heatmap + confusion matrix plotting
 │   ├── validators/
 │   │   └── schema_validator.py       # pydantic schema: separates valid from invalid rows
 │   └── pipeline.py                   # Orchestrates the full raw -> clean -> ML-ready flow
+├── outputs/
+│   └── figures/                      # correlation_heatmap.png, confusion_matrix_{relu,tanh}.png (tracked)
 ├── tests/                            # Unit tests (pytest) for every module above
 ├── requirements.txt
 ├── LICENSE
@@ -136,6 +147,32 @@ A real baseline `RandomForestRegressor` trained on the cleaned → filtered → 
 - **`cost` shows importance 0.282, nearly tied with `priority`, despite having *no* causal link to `response_time_hours` in the generator** (`cost` is drawn independently). This is a known artifact of scikit-learn's default impurity-based `feature_importances_`, which is biased toward high-cardinality continuous features even when they carry no real signal — documented here rather than mistaken for a genuine driver. A permutation-importance or SHAP pass would be the correct next step to confirm `cost`'s true (near-zero) contribution.
 - **Per-category IQR still winsorizes ~16% of `response_time_hours` values**, more than `cost`'s ~2.5% under a single global IQR. Switching from global to per-category IQR (see `outlier_handler.py`) fixed the worse problem (a global rule over-flagging entire high-scale categories as anomalous), but within-category the multiplicative log-normal noise used to generate realistic ticket-to-ticket variability still produces a heavier right tail than a linear IQR rule expects — a real, documented limitation of IQR-based methods on skewed distributions, not tuned away to make the number look better.
 
+## Correlation Heatmap (`src/visualization/plots.py`)
+
+Before trusting any model's feature importance, the raw pairwise correlations are worth checking directly:
+
+![Correlation heatmap](outputs/figures/correlation_heatmap.png)
+
+`priority_encoded` correlates at **-0.359** with `response_time_hours` (higher priority → faster resolution, exactly the injected causal direction) and `category_Feature Request`/`Bug Report` correlate positively (+0.317/+0.180 — slower categories). `cost` correlates at **0.008**, essentially zero — the same conclusion the forecasting model's feature-importance artifact (above) obscured, confirmed here directly from the data before any model gets involved.
+
+## SLA-Breach Classifier: ReLU vs. Tanh (`src/models/sla_breach_classifier.py`)
+
+A second, genuinely different downstream model: instead of forecasting the exact number of hours, this classifies whether a ticket will **breach a 24-hour SLA** (`response_time_hours > 24`) — a binary decision a support manager actually acts on. Reuses the same filtered, encoded features as the regression model above, binarizing the target instead of duplicating the data-prep logic.
+
+Two identical `MLPClassifier` architectures (`hidden_layer_sizes=(16, 8)`, same seed, same train/test split) are trained, differing **only** in the hidden-layer activation function — the same controlled-comparison pattern used elsewhere in this portfolio for activation functions, applied here to a real support-ops decision instead of price direction.
+
+| Activation | Accuracy | Precision | Recall | F1 |
+|---|---|---|---|---|
+| ReLU | 0.822 | 0.821 | 0.735 | 0.776 |
+| **Tanh** | **0.826** | 0.821 | **0.748** | **0.783** |
+
+Tanh narrowly wins on every metric except precision (a tie) — reported as the real, close result it is, not a dramatic winner-take-all story. Train/test: 5,856 / 1,465 rows; SLA breach rate 41.9% in both splits (stratified).
+
+![Confusion matrix, ReLU](outputs/figures/confusion_matrix_relu.png)
+![Confusion matrix, Tanh](outputs/figures/confusion_matrix_tanh.png)
+
+Both confusion matrices show the same pattern: precision on "Incumple SLA" (breach) is solid (~0.82) but recall is the softer number (~0.74) — the model is more likely to miss a real breach than to false-alarm on a ticket that's actually fine, worth knowing before setting an alert threshold from this model in practice.
+
 ## Installation
 
 ```bash
@@ -166,6 +203,18 @@ Train and evaluate the baseline forecasting model (needs `clean_it_tickets.csv`,
 python -m src.models.forecast_response_time
 ```
 
+Train and compare the SLA-breach classifier (ReLU vs. Tanh), saving both confusion matrices:
+
+```bash
+python -m src.models.sla_breach_classifier
+```
+
+Generate the correlation heatmap:
+
+```bash
+python -m src.visualization.plots
+```
+
 Unit tests:
 
 ```bash
@@ -177,9 +226,9 @@ pytest tests/
 - **pandas / numpy** — data manipulation and transformation
 - **pydantic** — strongly-typed schema validation
 - **rapidfuzz** — fuzzy matching for name unification and near-duplicate detection
-- **scikit-learn** — RandomForest baseline forecasting model
+- **scikit-learn** — RandomForest baseline forecasting model, MLPClassifier (ReLU/Tanh) for SLA-breach classification
 - **openpyxl** — Excel read/write support
-- **matplotlib / seaborn** — exploratory visualization
+- **matplotlib / seaborn** — correlation heatmap, confusion matrices, exploratory visualization
 - **pytest** — unit tests
 
 ## License
