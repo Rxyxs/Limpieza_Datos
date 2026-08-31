@@ -21,6 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import accuracy_score, classification_report, f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPClassifier
@@ -101,6 +102,67 @@ def train_and_compare_activations(df: pd.DataFrame, test_size: float = 0.2, rand
     }
 
 
+def _train_gradient_boosting(X_train, X_test, y_train, y_test, random_state: int) -> dict:
+    """Tercer punto de comparación: un ensamble de árboles (`GradientBoostingClassifier`)
+    junto a las dos redes MLP (ReLU/Tanh) de arriba -- no requiere escalado de
+    features (los árboles son invariantes a la escala, a diferencia de la MLP),
+    así que se entrena sobre `X_train`/`X_test` sin transformar.
+    """
+    model = GradientBoostingClassifier(
+        n_estimators=200, max_depth=3, learning_rate=0.1, random_state=random_state,
+    )
+    model.fit(X_train, y_train)
+    predictions = model.predict(X_test)
+
+    return {
+        "activation": "gradient_boosting",
+        "model": model,
+        "predictions": predictions,
+        "accuracy": accuracy_score(y_test, predictions),
+        "precision": precision_score(y_test, predictions, zero_division=0),
+        "recall": recall_score(y_test, predictions, zero_division=0),
+        "f1": f1_score(y_test, predictions, zero_division=0),
+        "report": classification_report(y_test, predictions, target_names=CLASS_LABELS, zero_division=0),
+    }
+
+
+def train_and_compare_all_models(df: pd.DataFrame, test_size: float = 0.2, random_state: int = 42) -> dict:
+    """Extiende `train_and_compare_activations` con un tercer enfoque -- un
+    ensamble de árboles (`GradientBoostingClassifier`) -- junto a las dos redes
+    MLP (ReLU/Tanh), para una comparación de tres arquitecturas genuinamente
+    distintas sobre el mismo split de datos: red neuronal (dos activaciones)
+    vs. ensamble de árboles de gradiente.
+
+    Se mantiene como función separada (en vez de modificar
+    `train_and_compare_activations`) para no romper su contrato ni sus tests
+    existentes -- este repo agrega de forma aditiva.
+    """
+    X, y = prepare_classification_frame(df)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
+
+    scaler = StandardScaler().fit(X_train)
+    X_train_scaled = scaler.transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+
+    results = {
+        activation: _train_single_activation(activation, X_train_scaled, X_test_scaled, y_train, y_test, random_state)
+        for activation in ("relu", "tanh")
+    }
+    # GradientBoostingClassifier no necesita features escaladas.
+    results["gradient_boosting"] = _train_gradient_boosting(X_train, X_test, y_train, y_test, random_state)
+
+    return {
+        "n_train": len(X_train),
+        "n_test": len(X_test),
+        "breach_rate_train": float(y_train.mean()),
+        "breach_rate_test": float(y_test.mean()),
+        "y_test": y_test,
+        "results_by_model": results,
+    }
+
+
 if __name__ == "__main__":
     clean_df = pd.read_csv(CLEAN_DATA_PATH)
     outcome = train_and_compare_activations(clean_df)
@@ -124,3 +186,16 @@ if __name__ == "__main__":
     tanh_f1 = outcome["results_by_activation"]["tanh"]["f1"]
     winner = "relu" if relu_f1 >= tanh_f1 else "tanh"
     print(f"\nMejor F1: {winner} (relu={relu_f1:.3f} vs. tanh={tanh_f1:.3f})")
+
+    print("\n\n=== Comparación de tres arquitecturas: ReLU vs. Tanh vs. Gradient Boosting ===")
+    full_outcome = train_and_compare_all_models(clean_df)
+    for model_name, result in full_outcome["results_by_model"].items():
+        print(f"{model_name:>18}: accuracy={result['accuracy']:.3f}  precision={result['precision']:.3f}  recall={result['recall']:.3f}  f1={result['f1']:.3f}")
+
+    from src.visualization.plots import plot_model_comparison_bars
+    bar_path = plot_model_comparison_bars(full_outcome["results_by_model"], FIGURES_DIR / "sla_model_comparison.png")
+    print(f"Gráfico comparativo de 3 modelos guardado en {bar_path}")
+
+    from src.models.metrics_store import persist_sla_comparison_metrics
+    db_path = persist_sla_comparison_metrics(full_outcome)
+    print(f"Métricas comparativas persistidas en {db_path}")

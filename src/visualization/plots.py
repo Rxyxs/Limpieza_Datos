@@ -74,6 +74,48 @@ def plot_confusion_matrix(
     return output_path
 
 
+def plot_model_comparison_bars(
+    results_by_model: dict,
+    output_path: Path,
+    metrics: tuple[str, ...] = ("accuracy", "precision", "recall", "f1"),
+    title: str = "Comparación de modelos -- clasificador de incumplimiento de SLA",
+) -> Path:
+    """Grafica un bar chart agrupado con accuracy/precision/recall/f1 para cada
+    modelo en `results_by_model` (dict de nombre -> dict de métricas, la misma
+    forma que devuelven `train_and_compare_activations`/`train_and_compare_all_models`).
+
+    Separado de `plot_confusion_matrix` porque compara *modelos entre sí*, no
+    predicciones vs. realidad de un solo modelo -- útil en cuanto hay 3+
+    enfoques compitiendo (ReLU, Tanh, y un ensamble de árboles) y una tabla de
+    texto se vuelve más difícil de comparar de un vistazo que un gráfico.
+    """
+    model_names = list(results_by_model.keys())
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    x = np.arange(len(metrics))
+    width = 0.8 / max(len(model_names), 1)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    palette = sns.color_palette("deep", n_colors=len(model_names))
+    for i, name in enumerate(model_names):
+        values = [results_by_model[name][m] for m in metrics]
+        offset = (i - (len(model_names) - 1) / 2) * width
+        bars = ax.bar(x + offset, values, width, label=name, color=palette[i])
+        ax.bar_label(bars, fmt="%.2f", fontsize=8, padding=2)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(metrics)
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("Score")
+    ax.set_title(title)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+    return output_path
+
+
 if __name__ == "__main__":
     from src.features.feature_encoder import build_ml_ready_dataset
     from src.filters.business_filters import apply_ml_scope_filters

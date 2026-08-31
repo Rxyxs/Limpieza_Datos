@@ -8,7 +8,7 @@
 ![rapidfuzz](https://img.shields.io/badge/rapidfuzz-fuzzy%20matching-4C7A3E)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-RandomForest%20%7C%20MLP-F7931E?logo=scikitlearn&logoColor=white)
 ![seaborn](https://img.shields.io/badge/seaborn-heatmaps-4C72B0)
-![Tests](https://img.shields.io/badge/tests-43%20passing-brightgreen?logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-51%20passing-brightgreen?logo=pytest&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 Proyecto de **Ingeniería y Limpieza de Datos Avanzada** aplicado a operaciones de soporte TI/SaaS. Genera un dataset sintético de tickets de soporte con los defectos típicos de datos reales de producción, y lo convierte en un dataset limpio, tipado, validado y listo para ML mediante un pipeline modular de limpieza -- cerrando el ciclo con dos modelos downstream reales entrenados sobre la propia salida del pipeline: un regresor RandomForest que pronostica el tiempo de resolución, y un clasificador de red neuronal (ReLU vs. Tanh, comparados cara a cara) que predice incumplimiento de SLA.
@@ -27,7 +27,8 @@ Números de una corrida real (`python -m src.pipeline`, dataset de 10.000 ticket
 | **Modelo de pronóstico (RandomForest) vs. baseline de media** | MAE 20,29h vs. 31,47h (**-35,5%**) | R²=0,380 -- el dataset limpio, filtrado y codificado lleva señal real y aprovechable para un modelo downstream |
 | **Clasificador de incumplimiento de SLA (MLP, mejor activación)** | Tanh: F1 0,783, accuracy 82,6% | Le gana por poco a ReLU (F1 0,776) con arquitectura idéntica -- una comparación real y controlada, no afirmada |
 | Chequeo de correlación (sanidad) | `cost` r=0,008 vs. `priority_encoded` r=-0,359 con `response_time_hours` | Confirma en los datos crudos, antes de cualquier modelo, que costo no lleva señal real y prioridad sí -- exactamente como fue diseñado |
-| Suite de tests | 43/43 pasando | Cubre los 11 módulos: generación, limpieza, tratamiento de outliers, detección de duplicados, filtrado, codificación, validación, visualización, ambos modelos |
+| **Clasificador de SLA, 3 vías (agrega Gradient Boosting)** | GBoost: F1 0,779, recall 0,752 (el mejor de los tres) | Mejor recall, F1 cercano a ambas MLP -- ninguna arquitectura domina todas las métricas |
+| Suite de tests | 51/51 pasando | Cubre los 13 módulos: generación, limpieza, tratamiento de outliers, detección de duplicados, filtrado, codificación, validación, visualización, los tres modelos, y persistencia de métricas |
 
 ## Objetivo
 
@@ -49,9 +50,11 @@ flowchart LR
     I --> K[business_filters.py<br/>alcance resueltos + costo positivo]
     K --> L[feature_encoder.py<br/>ordinal + one-hot]
     L --> M["forecast_response_time.py<br/>RandomForestRegressor"]
-    L --> N["sla_breach_classifier.py<br/>MLPClassifier: ReLU vs Tanh"]
+    L --> N["sla_breach_classifier.py<br/>MLP: ReLU vs Tanh vs GBoost"]
     L --> O["plots.py<br/>heatmap de correlacion"]
     N --> P[(confusion_matrix_relu.png<br/>confusion_matrix_tanh.png)]
+    N --> Q["plots.py<br/>bar chart comparativo"]
+    N --> R[("metrics_store.py<br/>outputs/metrics.duckdb")]
 ```
 
 ```
@@ -77,7 +80,8 @@ it-data-wrangling-pipeline/
 │   │   └── feature_encoder.py        # Codificación ordinal (prioridad) + one-hot (categoría/estado)
 │   ├── models/
 │   │   ├── forecast_response_time.py # Baseline RandomForest vs. media, MAE/R²/importancia real
-│   │   └── sla_breach_classifier.py  # MLPClassifier ReLU vs. Tanh, matrices de confusión
+│   │   ├── sla_breach_classifier.py  # MLPClassifier ReLU vs. Tanh (+ 3 vías con GradientBoosting), matrices de confusión
+│   │   └── metrics_store.py          # Persiste métricas comparativas de modelos en DuckDB local
 │   ├── visualization/
 │   │   └── plots.py                  # Heatmap de correlación + matrices de confusión
 │   ├── validators/
@@ -173,6 +177,22 @@ Tanh gana por poco en todas las métricas excepto precisión (empate) -- reporta
 
 Ambas matrices de confusión muestran el mismo patrón: la precisión en "Incumple SLA" es sólida (~0,82) pero el recall es el número más blando (~0,74) -- el modelo tiene más probabilidad de perderse un incumplimiento real que de dar una falsa alarma sobre un ticket que en realidad está bien, algo importante de saber antes de fijar un umbral de alerta desde este modelo en la práctica.
 
+### Tercer punto de comparación: agregando un ensamble de árboles (`train_and_compare_all_models`)
+
+Dos activaciones de red neuronal siguen siendo solo una familia de modelo. `src/models/sla_breach_classifier.py::train_and_compare_all_models` agrega una arquitectura genuinamente distinta sobre el mismo split -- `GradientBoostingClassifier`, un ensamble de árboles que no necesita escalado de features (los árboles dividen sobre umbrales crudos; el `StandardScaler` usado para las dos MLP se omite para este modelo) -- mantenida como función separada de `train_and_compare_activations` para no tocar el contrato (ni los tests) de la comparación original de dos vías.
+
+| Modelo | Accuracy | Precisión | Recall | F1 |
+|---|---|---|---|---|
+| ReLU (MLP) | 0,822 | 0,821 | 0,735 | 0,776 |
+| **Tanh (MLP)** | **0,826** | 0,821 | 0,748 | **0,783** |
+| Gradient Boosting (ensamble de árboles) | 0,821 | 0,808 | **0,752** | 0,779 |
+
+Gradient Boosting supera a ReLU en recall y empata el F1 de Tanh dentro de un punto -- ninguna arquitectura domina en todas las métricas, un resultado realista que vale la pena reportar tal cual en vez de elegir un ganador para encajar una narrativa.
+
+![Comparación de modelos: ReLU vs. Tanh vs. Gradient Boosting](outputs/figures/sla_model_comparison.png)
+
+Las métricas de cada corrida también se persisten en una base de datos DuckDB embebida local (`src/models/metrics_store.py` → `outputs/metrics.duckdb`, no versionada en git) -- una fila por modelo por corrida, con timestamp y agregada (nunca sobreescrita), así se pueden comparar mejoras a lo largo del tiempo tras cambios de hiperparámetros o dataset, en vez de solo leer la última salida de consola.
+
 ## Instalación
 
 ```bash
@@ -203,7 +223,7 @@ Entrenar y evaluar el modelo de pronóstico baseline (necesita `clean_it_tickets
 python -m src.models.forecast_response_time
 ```
 
-Entrenar y comparar el clasificador de incumplimiento de SLA (ReLU vs. Tanh), guardando ambas matrices de confusión:
+Entrenar y comparar el clasificador de incumplimiento de SLA (ReLU vs. Tanh, más la comparación de 3 vías con Gradient Boosting), guardando ambas matrices de confusión, el bar chart comparativo, y las métricas en DuckDB:
 
 ```bash
 python -m src.models.sla_breach_classifier
@@ -226,7 +246,8 @@ pytest tests/
 - **pandas / numpy** — manipulación y transformación de datos
 - **pydantic** — validación de esquema con tipado fuerte
 - **rapidfuzz** — coincidencia difusa para unificación de nombres y detección de casi-duplicados
-- **scikit-learn** — modelo de pronóstico baseline RandomForest, MLPClassifier (ReLU/Tanh) para incumplimiento de SLA
+- **scikit-learn** — modelo de pronóstico baseline RandomForest, MLPClassifier (ReLU/Tanh) y GradientBoostingClassifier para incumplimiento de SLA
+- **duckdb** — persistencia local embebida de métricas comparativas de modelos entre corridas
 - **openpyxl** — soporte de lectura/escritura de Excel
 - **matplotlib / seaborn** — heatmap de correlación, matrices de confusión, visualización exploratoria
 - **pytest** — pruebas unitarias

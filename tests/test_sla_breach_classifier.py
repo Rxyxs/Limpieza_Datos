@@ -2,7 +2,12 @@
 import numpy as np
 import pandas as pd
 
-from src.models.sla_breach_classifier import SLA_THRESHOLD_HOURS, prepare_classification_frame, train_and_compare_activations
+from src.models.sla_breach_classifier import (
+    SLA_THRESHOLD_HOURS,
+    prepare_classification_frame,
+    train_and_compare_activations,
+    train_and_compare_all_models,
+)
 
 
 def _synthetic_clean_dataset(n: int = 400) -> pd.DataFrame:
@@ -60,3 +65,20 @@ def test_breach_rate_reflects_the_sla_threshold():
     expected_rate = (df["response_time_hours"] > SLA_THRESHOLD_HOURS).mean()
     # Redondeado por el filtrado de alcance (resolved+costo positivo), deberia ser cercano.
     assert abs(y.mean() - expected_rate) < 0.05
+
+
+def test_train_and_compare_all_models_adds_gradient_boosting_as_third_arm():
+    df = _synthetic_clean_dataset()
+    outcome = train_and_compare_all_models(df)
+
+    assert set(outcome["results_by_model"].keys()) == {"relu", "tanh", "gradient_boosting"}
+    for model_name, result in outcome["results_by_model"].items():
+        assert 0.0 <= result["accuracy"] <= 1.0
+        assert len(result["predictions"]) == outcome["n_test"]
+
+
+def test_train_and_compare_activations_contract_unchanged():
+    # La función original no debe verse afectada por agregar el tercer modelo.
+    df = _synthetic_clean_dataset()
+    outcome = train_and_compare_activations(df)
+    assert set(outcome["results_by_activation"].keys()) == {"relu", "tanh"}
