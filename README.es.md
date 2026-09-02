@@ -74,25 +74,25 @@ Dólar observado y UF diarios reales, más TPM/IPC/IMACEC mensuales, vía `mindi
 **Hallazgo honesto**: los tres enfoques prácticamente empatan en R²≈0 -- consistente con la eficiencia del mercado cambiario. Ningún modelo se reporta como ganador porque ninguno lo es de forma significativa.
 
 ![Missingness antes/después de reindexar calendario](outputs/financial/figures/missingness_before_after.png)
-Dólar y TPM pierden ~32% de días de calendario (fines de semana/feriados); la UF casi no pierde ninguno -- se cotiza todos los días del calendario, no solo hábiles.
+Dos barras por serie: la barra naranja es el % de días de calendario sin valor publicado antes de limpiar, la barra azul es la misma métrica después de `reindex_to_full_calendar` + forward-fill. Dólar y TPM parten en ~32% de nulos (todo fin de semana y feriado no tiene cotización, porque el mercado cambiario chileno solo opera días hábiles) y bajan a 0% una vez que esos huecos se crean explícitamente como filas y se rellenan con el último valor conocido. La UF casi no se mueve porque esta unidad de cuenta reajustable por inflación está, por ley, definida para todos los días del calendario -- casi no tiene nada que reindexar.
 
 ![Distribución del retorno del dólar, crudo vs. winsorizado](outputs/financial/figures/return_distribution_before_after.png)
-Solo se recorta la cola estadísticamente extrema (IQR k=4) -- la volatilidad real de mercado (ej. el shock COVID de 2020) se preserva, no se suaviza.
+Dos histogramas superpuestos (con una curva de densidad suavizada sobre cada uno) del retorno logarítmico diario del dólar: naranja es la distribución cruda sin tocar; azul es tras winsorizar con IQR k=4. Las dos curvas quedan prácticamente idénticas en todas partes excepto en las colas extremas, que es justamente el punto -- la winsorización acá solo recorta el puñado de días estadísticamente implausibles, no comprime ni deforma el grueso del movimiento real de mercado día a día.
 
 ![Serie de tiempo USD/CLP](outputs/financial/figures/dolar_timeseries.png)
-Historial completo 2013-2026 con media móvil de 20 días.
+La línea fina es el tipo de cambio observado diario crudo para todo el historial 2013-2026; la línea gruesa es una media móvil de 20 días superpuesta para que la tendencia de mediano plazo se pueda leer a través del ruido diario. Sirve como chequeo visual rápido de todo el panel a la vez: cada movimiento real importante (la caída de commodities 2015-2016, el shock COVID de 2020, el peak de 2022) debería ser visible acá antes de confiar en cualquier modelo construido sobre estos datos.
 
 ![Heatmap de correlación de features](outputs/financial/figures/feature_correlation.png)
-Ninguna feature individual correlaciona fuerte con el retorno del día siguiente -- consistente con el resultado del modelo.
+Una matriz de correlación de Pearson (rojo = positiva, azul = negativa, blanco ≈ 0) entre cada feature del modelo -- retornos rezagados, ventanas de volatilidad móvil, TPM/IPC/IMACEC -- y la columna target real (el retorno de mañana), incluida como su propia fila/columna para que su correlación con cada feature sea visible directamente. Cada celda que toca al target queda cerca del blanco: ninguna feature individual se mueve junto con el retorno de mañana de forma linealmente relevante, exactamente lo esperable en un mercado eficiente, y anticipa por qué cada modelo de la tabla de abajo termina con R²≈0.
 
 ![Curva de entrenamiento MLP](outputs/financial/figures/mlp_training_curve.png)
-Entrenamiento real, >=100 épocas, mejor checkpoint marcado.
+Pérdida de entrenamiento (azul) y de validación (naranja) graficadas contra la época de entrenamiento, con una línea vertical punteada marcando la época cuya pérdida de validación efectivamente se conservó como modelo final (no necesariamente la última época corrida -- `train_with_early_stopping` restaura el mejor checkpoint, nunca solo el más reciente). El piso de >=100 épocas es directamente visible como el largo del eje x.
 
 ![Retorno real vs. predicho](outputs/financial/figures/mlp_regression_diagnostics.png)
-Una nube plana y dispersa es la firma visual de un R²≈0.
+Dos paneles lado a lado. Izquierda: cada día del test set graficado como (retorno real, retorno predicho), con una línea diagonal punteada mostrando dónde pondría cada punto un modelo perfecto -- mientras más pegada esté la nube a esa línea, mejor el modelo. Derecha: los residuales de esas mismas predicciones (real − predicho) graficados contra la predicción misma, que debería verse como una banda plana y sin estructura si el modelo no sobre- ni sub-predice sistemáticamente en alguna zona. Acá ambos paneles muestran una dispersión ancha y sin forma, sin relación visible con la diagonal -- la firma visual honesta de un modelo sin poder predictivo real (R²≈0), no un error de gráfico.
 
 ![Comparación de modelos](outputs/financial/figures/model_comparison.png)
-Baseline, MLP y XGBoost prácticamente empatan.
+Un bar chart agrupado con un grupo de barras por modelo (baseline, MLP, XGBoost) a través de tres métricas (R², RMSE, MAE), con el valor numérico etiquetado sobre cada barra. Las tres barras de cada grupo de métrica quedan prácticamente a la misma altura -- la prueba visual de que ninguno de los tres enfoques supera de forma significativa a un modelo que simplemente predice el promedio histórico.
 
 ---
 
@@ -120,22 +120,25 @@ Tras excluir las 4 columnas subtotal, la suma de las 38 restantes coincide con e
 **Hallazgo honesto**: XGBoost gana claramente; ambos modelos reales superan al baseline estacional por un margen genuino. La MLP tuvo un segundo problema de entrenamiento, distinto del dominio financiero: incluso con `LeakyReLU`, un target sin escalar (media ~450) llevó el R² a -77 -- corregido escalando también el target, no la activación.
 
 ![Missingness antes/después](outputs/mining/figures/missingness_before_after.png)
-Confirma cero celdas realmente vacías entre las filas mensuales reales.
+Mismo formato de barras antes/después que el dominio financiero, pero acá el resultado es distinto y en sí mismo informativo: ambas barras quedan en (o cerca de) 0% para las 38 columnas reales de faena, porque -- como explica el texto arriba -- una faena que no está produciendo reporta un `0.0` explícito, no una celda vacía. Este gráfico es la confirmación visual de que el desafío de limpieza de este dominio es realmente estructural (filas/columnas equivocadas), no valores faltantes, antes de que cualquier lógica de imputación tenga la oportunidad de tratar esos ceros como huecos (incorrectamente).
 
 ![Distribución de producción antes/después de winsorizar](outputs/mining/figures/production_distribution_before_after.png)
-Winsorización por empresa (k=3.0, solo meses no-cero).
+Distribución cruda (naranja) vs. winsorizada (azul) de los valores de producción mensual, agrupados entre las 38 empresas pero winsorizados de forma independiente DENTRO de la escala propia de cada empresa (IQR k=3.0, solo meses no-cero) -- una empresa que produce cientos de miles de toneladas al mes y una que produce unos pocos miles nunca se comparan contra el mismo corte global, que marcaría injustamente la variación normal de la operación más grande como "outlier".
 
 ![Serie de tiempo de producción nacional](outputs/mining/figures/produccion_nacional_timeseries.png)
-Producción nacional mensual real de cobre, 2014-2026.
+Producción nacional mensual real de cobre (la suma de las 38 columnas reales de faena, excluidas las columnas subtotal), de 2014 a mediados de 2026, con una media móvil superpuesta de la misma forma que el gráfico del dólar del dominio financiero -- el lugar indicado para revisar a ojo las caídas estacionales reales (la producción chilena de cobre suele bajar en el invierno del hemisferio sur) y cualquier tendencia de producción de más largo plazo antes de confiar en la comparación del modelo contra el baseline estacional.
 
 ![Correlación de features](outputs/mining/figures/feature_correlation.png)
+Heatmap de correlación entre las features de rezago/ventana móvil y la producción nacional del mes siguiente. A diferencia del dominio financiero, acá se espera (y el gráfico lo muestra) una correlación visiblemente fuerte entre la producción y sus propios rezagos recientes -- la producción minera de cobre está fuertemente autocorrelacionada mes a mes, exactamente la estructura que el baseline estacional ya explota, y la vara que ambos modelos reales tienen que superar.
 
 ![Curva de entrenamiento MLP](outputs/mining/figures/mlp_training_curve.png)
->=100 épocas, early stopping en la época 136, mejor checkpoint en 111.
+Pérdida de entrenamiento/validación vs. época, misma lectura que la curva del dominio financiero. Esta corrida es un ejemplo concreto de `min_epochs=100` combinado con early stopping real haciendo su trabajo: el modelo entrenó más allá del piso de 100 épocas y luego se detuvo solo en la época 136 una vez que la pérdida de validación dejó de mejorar durante la ventana de paciencia configurada, restaurando los pesos de su mejor época (111), no de la última.
 
 ![Real vs. predicho, XGBoost](outputs/mining/figures/xgboost_regression_diagnostics.png)
+Mismo formato de real-vs-predicho más residuales que el gráfico de diagnóstico del dominio financiero, pero para el mejor modelo real del dominio minero. Acá la nube de puntos se pega visiblemente mucho más a la diagonal punteada que en el gráfico financiero -- la contraparte visual directa del R²=0.515 real de XGBoost, un modelo que efectivamente explica una porción relevante de la variación mes a mes, no solo iguala el resultado honesto cercano a cero del dominio financiero.
 
 ![Comparación de modelos](outputs/mining/figures/model_comparison.png)
+Mismo formato de barras agrupadas que el dominio financiero, pero acá las tres barras se separan claramente en vez de empatar: la barra de XGBoost es visiblemente más alta en R² y más baja en RMSE/MAE que tanto el baseline estacional como la MLP, en cada métrica -- una victoria real, no un empate a cara o sello.
 
 ---
 
@@ -158,19 +161,25 @@ Producción nacional mensual real de cobre, 2014-2026.
 **Hallazgo honesto**: ambos modelos reales superan al baseline por un margen amplio y genuino -- un contraste real con el dominio financiero. El baseline es negativo porque el rendimiento tiene una tendencia real al alza a través de las décadas, así que un promedio histórico por país subestima sistemáticamente el período de test 2020-2025.
 
 ![Missingness antes/después](outputs/agriculture/figures/missingness_before_after.png)
+Un par de barras antes/después por indicador. La mayoría casi no se mueve (ya estaban 95%+ completos, con el hueco ocasional siendo solo un año reciente aún no reportado). `irrigated_land_pct` es la barra visiblemente distinta del grupo -- parte mucho más alta que el resto y NO baja a cero tras limpiar, porque la interpolación solo puede rellenar un hueco que tenga dato real a al menos un lado dentro del mismo país, y la serie completa de riego de Perú no tiene ninguno; esa altura de barra residual es justamente las celdas de Perú imputadas por media entre países, mantenida visible honestamente en vez de escondida por un gráfico que solo muestre los indicadores "exitosos".
 
 ![Correlación de features](outputs/agriculture/figures/feature_correlation.png)
+Heatmap de correlación entre las features socioeconómicas/agronómicas y el rendimiento de cereales del año siguiente. A diferencia de la fila mayormente blanca del dominio financiero, acá se espera color real -- el uso de fertilizante y los propios rezagos del rendimiento deberían mostrar correlación positiva visiblemente fuerte con el target, la vista previa visual directa de por qué ambos modelos reales terminan bien por sobre R²=0.8 en la tabla de resultados.
 
 ![Rendimiento de cereales, Chile](outputs/agriculture/figures/cereal_yield_timeseries_CHL.png)
+Rendimiento anual real de cereales de Chile (kg/hectárea), 1990-2025 -- una sola serie de país extraída del panel de 9 países para que la tendencia real de largo plazo al alza se lea con claridad por sí sola, la misma tendencia que hace del baseline ingenuo de media por país un predictor sistemáticamente débil para los años de test más recientes.
 
 ![Rendimiento de cereales, Argentina](outputs/agriculture/figures/cereal_yield_timeseries_ARG.png)
+La misma serie real para Argentina, mostrada junto a la de Chile específicamente para poder comparar ambas directamente -- un chequeo de sanidad útil de que las diferencias de escala entre países del panel (visibles acá) son diferencias agronómicas genuinas, no una inconsistencia de unidades o parseo entre países.
 
 ![Curva de entrenamiento MLP](outputs/agriculture/figures/mlp_training_curve.png)
->=100 épocas, early stopping en la época 330, mejor checkpoint en 305.
+Pérdida de entrenamiento/validación vs. época. Esta corrida ilustra el piso `min_epochs=100` funcionando como se pretendía en un dominio con señal real: el modelo necesitó todo el recorrido más allá de la época 100 para seguir mejorando, activando early stopping recién al estancarse en la época 330, con su mejor checkpoint real guardado desde la época 305.
 
 ![Rendimiento real vs. predicho](outputs/agriculture/figures/regression_diagnostics.png)
+Scatter de real-vs-predicho más residuales, mismo formato que los otros tres dominios, para el mejor modelo de este dominio. La nube de puntos queda visiblemente pegada a la diagonal punteada en casi todo el rango real de rendimiento -- la contraparte visual de un R²≈0.88 real, no un subconjunto elegido a dedo porque se ve bien.
 
 ![Comparación de modelos](outputs/agriculture/figures/model_comparison.png)
+Barras agrupadas por modelo por métrica. La barra de R² del baseline efectivamente baja por DEBAJO de cero (el eje se dibuja para mostrarlo honestamente en vez de recortarlo en 0), haciendo visualmente el punto de que "el promedio histórico" es acá un predictor genuinamente malo -- mientras que las barras de ambos modelos reales quedan claramente, similarmente altas.
 
 ---
 
@@ -197,20 +206,25 @@ El World Development Indicators **completo** del Banco Mundial: un Excel real de
 **Una nota sobre el dato crudo en sí**: sin filtrar, incluye catástrofes humanitarias reales y documentadas -- Camboya 1976-78 (Jemeres Rojos) y Ruanda 1994 (genocidio) muestran esperanza de vida alrededor de 11-12 años en este mismo warehouse. Se mantiene tal como el Banco Mundial lo publica, no se recorta por "verse mal".
 
 ![Funnel de ETL](outputs/consulting/figures/etl_funnel.png)
-Conteo de filas a través de crudo ancho -> largo -> agregados excluidos -> interpolado.
+Una barra horizontal por etapa del pipeline, cada una etiquetada con su conteo real de filas, leída de arriba hacia abajo: el extracto ancho crudo (2.660 filas país×indicador, una por indicador curado) -> aplanado a formato largo (172.900 filas país×indicador×año, una por observación real o faltante) -> tras excluir agregados regionales/de ingreso vía el campo `Region` de la hoja `Country` (141.050) -> filas con un valor real no-nulo antes de cualquier interpolación (79.597) -> tras interpolar dentro de cada serie, que recupera los huecos recuperables (132.600). La diferencia entre dos barras consecutivas es un efecto real y contable de un paso de limpieza específico, no una estimación.
 
 ![Missingness antes/después](outputs/consulting/figures/missingness_before_after.png)
+Par de barras antes/después por indicador curado, a nivel de tabla de hechos (celdas país×indicador×año) en vez de por columna como los gráficos de missingness de los otros dominios -- la contraparte numérica directa de la tasa de recuperación de huecos del 86% citada en el texto de arriba, y un recordatorio de que la altura de barra restante tras limpiar (14%) es exactamente el conjunto de series sin ningún dato real desde el cual interpolar, no un bug residual.
 
 ![Esperanza de vida, tres países reales](outputs/consulting/figures/esperanza_vida_paises.png)
-Chile vs. Haití vs. Japón, historia real 1960-2024.
+Tres series nacionales reales de esperanza de vida extraídas directamente de la tabla de hechos del warehouse vía SQL, 1960-2024: Chile (un ascenso real y sostenido), Japón (partiendo ya alto y subiendo más, entre los más altos del mundo) y Haití (partiendo mucho más bajo y cerrando la brecha mucho más lento) -- elegidos específicamente para hacer visible en un solo gráfico la desigualdad global real de este indicador, no para elegir a dedo un ejemplo favorable.
 
 ![Correlación de features](outputs/consulting/figures/feature_correlation.png)
+Heatmap de correlación entre los indicadores socioeconómicos (gasto en salud, acceso a agua/saneamiento, PIB per cápita, mortalidad infantil, Gini, etc.) y la esperanza de vida del año siguiente. Se espera -- y el gráfico lo muestra -- correlación real fuerte desde la mortalidad infantil y el acceso a servicios básicos en particular, los mismos determinantes reales que predeciría la literatura epidemiológica, lo que hace que el R² alto de este dominio sea un resultado creíble y no sobreajustado.
 
 ![Curva de entrenamiento MLP](outputs/consulting/figures/mlp_training_curve.png)
+Pérdida de entrenamiento/validación vs. época para la MLP de esperanza de vida -- notar que acá tanto las features COMO el target se escalaron con z-score antes de entrenar (a diferencia del dominio financiero, donde solo se escalaron las features), porque la escala real del target (años de esperanza de vida, media ~70) está muy lejos del rango de salida cercano a cero de una red recién inicializada; saltarse ese paso fue lo que originalmente produjo predicciones completamente irreales (detalle en el docstring de `model.py`).
 
 ![Esperanza de vida real vs. predicha, XGBoost](outputs/consulting/figures/xgb_regression_diagnostics.png)
+Scatter de real-vs-predicho más residuales para el mejor modelo del dominio. La nube queda pegada de forma ajustada a la diagonal punteada en casi todo el rango real del eje (aproximadamente 40 a 85 años), incluidos los países del extremo bajo -- la contraparte visual de un R²=0.938 real, el resultado más fuerte de los 4 dominios.
 
 ![Comparación de modelos](outputs/consulting/figures/model_comparison.png)
+Barras agrupadas por modelo por métrica -- la barra de R² del baseline de media de train se dibuja claramente negativa (sin recortar en cero), el contraste más marcado de cualquier dominio de este proyecto, porque un promedio global de la era 1960 es un predictor particularmente malo para un período de test 2019-2024 dado cuánto se ha movido la tendencia global real desde entonces.
 
 ---
 
