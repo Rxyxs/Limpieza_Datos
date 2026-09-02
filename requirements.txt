@@ -8,3 +8,11 @@ matplotlib
 seaborn
 scikit-learn
 duckdb
+requests
+xgboost
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+jupyter
+nbconvert
+ipykernel
+nbformat

@@ -1,0 +1,100 @@
+{
+  "filas_crudas_ancho": 2660,
+  "filas_largas_pre_filtro": 172900,
+  "paises_reales_en_dimension": 217,
+  "agregados_regionales_excluidos": 48,
+  "filas_tras_excluir_agregados": 141050,
+  "filas_con_valor_real_antes_de_interpolar": 79597,
+  "missingness_antes": [
+    {
+      "columna": "valor",
+      "n_nulos": 61453,
+      "pct_nulos": 43.57,
+      "dtype": "float64"
+    },
+    {
+      "columna": "country_code",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "object"
+    },
+    {
+      "columna": "Country Name",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "object"
+    },
+    {
+      "columna": "Indicator Name",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "object"
+    },
+    {
+      "columna": "indicator_code",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "object"
+    },
+    {
+      "columna": "anio",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "int64"
+    },
+    {
+      "columna": "region",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "object"
+    }
+  ],
+  "missingness_despues": [
+    {
+      "columna": "valor",
+      "n_nulos": 8450,
+      "pct_nulos": 5.99,
+      "dtype": "float64"
+    },
+    {
+      "columna": "country_code",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "object"
+    },
+    {
+      "columna": "Country Name",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "object"
+    },
+    {
+      "columna": "Indicator Name",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "object"
+    },
+    {
+      "columna": "indicator_code",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "object"
+    },
+    {
+      "columna": "anio",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "int64"
+    },
+    {
+      "columna": "region",
+      "n_nulos": 0,
+      "pct_nulos": 0.0,
+      "dtype": "object"
+    }
+  ],
+  "filas_con_valor_tras_interpolar": 132600,
+  "n_paises_dim": 217,
+  "n_indicadores_dim": 10,
+  "n_filas_fact": 132600
+}

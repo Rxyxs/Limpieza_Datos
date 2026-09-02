@@ -10,3 +10,5 @@ __pycache__/
 *.pkl
 *.duckdb
 .DS_Store
+CLAUDE.md
+.claude/
