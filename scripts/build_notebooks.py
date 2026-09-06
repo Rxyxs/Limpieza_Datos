@@ -498,11 +498,122 @@ result = train_with_early_stopping(model, X[:300], y[:300], X[300:], y[300:], lo
 print(f"épocas corridas: {result.epochs_run}, mejor época: {result.best_epoch}")
 """),
     markdown("""
+## `excel_io`: el archivo `.xlsx` antes de que sea una tabla
+
+`excel_cleaning` arregla la forma del dato una vez cargado; `excel_io` resuelve
+el paso anterior. Inventariar el WDI real (80 MB, 6 hojas) cuesta ~2 segundos
+porque se abre en modo `read_only`, y ya deja ver algo que no se sospecha
+mirando el archivo en Excel: la hoja más grande del libro no es la de datos.
+"""),
+    code("""
+from src.toolkit.excel_io import (
+    coerce_excel_errors, excel_serial_to_datetime, hidden_rows_and_columns,
+    inventory_workbook, profile_cell_types, read_sheet_expanding_merges,
+)
+
+inventory_workbook("../data/raw/consulting/WDIEXCEL.xlsx")
+"""),
+    markdown("""
+### Filas y columnas ocultas: un mismo archivo real usa "oculto" con dos sentidos opuestos
+
+El `.xlsx` de COCHILCO tiene 144 filas ocultas y 1 columna oculta. **Las 144
+filas ocultas son todas meses reales** (COCHILCO colapsa el detalle mensual para
+dejar a la vista solo los subtotales anuales), así que descartarlas borraría 144
+de los 156 meses del archivo. La única columna oculta, en cambio, es
+`Chuqui y R.Tomic`: uno de los subtotales disfrazados que el dominio minero ya
+excluye por identidad numérica.
+
+Por eso `read_sheet_expanding_merges` no descarta nada por defecto y separa las
+dos banderas: una sola bandera aplicada a los dos ejes habría hecho exactamente
+lo incorrecto en la mitad de los casos, dentro de un mismo archivo.
+"""),
+    code("""
+from datetime import datetime
+
+COCHILCO = "../data/raw/mining/cochilco_produccion_mensual.xlsx"
+HOJA = "Prod.Cu-Mina x Faena (2014+)"
+
+filas_ocultas, columnas_ocultas = hidden_rows_and_columns(COCHILCO, sheet=HOJA)
+raw = read_sheet_expanding_merges(COCHILCO, sheet=HOJA)  # sin descartar nada
+meses_reales = set(raw.index[raw[0].apply(lambda v: isinstance(v, datetime))])
+
+print(f"filas ocultas: {len(filas_ocultas)}")
+print(f"de ellas, meses reales: {len(set(filas_ocultas) & meses_reales)}")
+print(f"meses reales que quedan visibles: {len(meses_reales - set(filas_ocultas))}")
+print(f"columna oculta: {[raw.iloc[6][c] for c in columnas_ocultas]}")
+"""),
+    markdown("""
+### Errores de fórmula, números de serie y tipos mezclados
+
+Tres diagnósticos que no existen en un CSV. El ejemplo de literales de error es
+ilustrativo (el archivo de COCHILCO no trae fórmulas rotas); el perfil de tipos
+sí corre sobre el archivo real, y muestra la mezcla texto/número/fecha que
+convierte toda la hoja en `object` antes de limpiarla.
+"""),
+    code("""
+con_errores = pd.DataFrame({
+    "produccion": [100, "#DIV/0!", 300, "#N/A"],
+    "empresa": ["Codelco", "Escondida", "#REF!", "Candelaria"],
+})
+limpio, reporte = coerce_excel_errors(con_errores)
+print(reporte.to_string(index=False))
+
+# Fechas guardadas como número de serie, con el bug del 29-02-1900 de Excel.
+print(excel_serial_to_datetime([45292, 60, 61]).tolist())
+
+profile_cell_types(raw, columns=[0, 1, 2])
+"""),
+    markdown("""
+## `excel_export`: devolver el dato limpio como entregable, no como `to_excel`
+
+Sobre el panel minero real ya limpio (150 meses x 47 columnas): encabezado
+congelado, autofiltro, anchos calculados, formato numérico declarado y una hoja
+`Diccionario` que documenta cada columna -- el archivo que efectivamente se
+manda, y que un tercero puede auditar sin leer el código que lo generó.
+"""),
+    code("""
+from src.toolkit.excel_export import build_data_dictionary, write_analysis_workbook
+
+panel = pd.read_csv("../data/processed/mining/mining_panel_clean.csv", parse_dates=["fecha"])
+formatos = {c: "#,##0.000" for c in panel.columns if c != "fecha"}
+
+ruta = write_analysis_workbook(
+    "../data/processed/mining/mining_panel_clean.xlsx",
+    {"Panel mensual": panel}, number_formats=formatos,
+)
+print(f"{ruta} ({ruta.stat().st_size / 1024:.0f} KB)")
+build_data_dictionary({"Panel mensual": panel}).head(6)
+"""),
+    markdown("""
+## `sql_dump`: leer y escribir un dump SQL sin levantar el motor
+
+El mismo panel exportado como dump Postgres y vuelto a leer a DataFrame. El
+round-trip es la prueba real: los nombres de columna de COCHILCO incluyen
+`Chuqui y R.Tomic` y `Centinela (sulfuros)`, y ambos rompen un parseo ingenuo
+(el punto se confunde con el separador `esquema.tabla`, el paréntesis cierra
+antes de tiempo la lista de columnas del `INSERT`).
+"""),
+    code("""
+from src.toolkit.sql_dump import dataframe_to_sql_dump, inventory_sql_dump, read_sql_dump
+
+dump = dataframe_to_sql_dump(
+    panel, "mining_produccion_mensual",
+    "../data/processed/mining/mining_panel_clean.sql", dialect="postgres",
+)
+print(inventory_sql_dump(dump).to_string(index=False))
+
+vuelta = read_sql_dump(dump)["mining_produccion_mensual"]
+vuelta["fecha"] = pd.to_datetime(vuelta["fecha"])
+pd.testing.assert_frame_equal(vuelta, panel, check_dtype=False)
+print("round-trip idéntico celda a celda")
+vuelta[["fecha", "Chuqui y R.Tomic", "Centinela (súlfuros)"]].head(3)
+"""),
+    markdown("""
 ## Conclusión
 
-Las mismas ~20 funciones de `src/toolkit/` (limpieza, outliers, texto, Excel,
-encoding, visualización, entrenamiento) se reusan sin cambios en los 4
-dominios -- lo único que cambia entre dominios es el dato de entrada real y
+Las mismas ~30 funciones de `src/toolkit/` (limpieza, outliers, texto, Excel,
+dumps SQL, encoding, visualización, entrenamiento) se reusan sin cambios en los
+4 dominios -- lo único que cambia entre dominios es el dato de entrada real y
 la interpretación del resultado, nunca la técnica.
 """),
 ]

@@ -17,6 +17,10 @@ flowchart TB
         TXT[text_cleaning.py]
         DT[datetime_cleaning.py]
         EXC[excel_cleaning.py]
+        EIO[excel_io.py]
+        EXP[excel_export.py]
+        SQL[sql_dump.py]
+        JSN[json_normalizer.py]
         ENC[encoding.py]
         VAL[validation.py]
         VIZ[viz.py]
@@ -44,6 +48,10 @@ flowchart TB
 | `text_cleaning.py` | Currency/number parsing (US and Latin-American formats, footnote markers), case normalization, fuzzy name unification |
 | `datetime_cleaning.py` | Timezone-aware date parsing, calendar reindexing with forward-fill |
 | `excel_cleaning.py` | Multi-row header flattening, header-row detection, footnote stripping, wide-year-to-long reshaping, subtotal-row removal |
+| `excel_io.py` | The `.xlsx` **file** before it is a table: sheet inventory (including `hidden` / `veryHidden` sheets), merged-range expansion, hidden row/column reporting, Excel error literals (`#N/A`, `#REF!`) with a per-column report, Excel serial-date conversion (1900 leap-year bug and the Mac 1904 system), invisible-character stripping, per-cell type profiling |
+| `excel_export.py` | The clean data back out as a **deliverable**: multi-sheet workbook with frozen header, autofilter, computed column widths, declared number formats, and a generated `Diccionario` sheet documenting every column of every sheet |
+| `sql_dump.py` | SQL dumps (`.sql`) read and written without starting a database engine: quote-aware statement splitting, `CREATE TABLE` / multi-row `INSERT` / `pg_dump` `COPY ... FROM stdin` parsing, dump inventory without materializing it, and batched export to Postgres/MySQL/SQLite dialects |
+| `json_normalizer.py` | Flattens a nested-JSON column into tabular columns, tolerating invalid or empty payloads |
 | `encoding.py` | Ordinal/one-hot encoding, z-score scaling with inverse transform |
 | `validation.py` | Generic pydantic row-by-row schema validation |
 | `viz.py` | 9 reusable chart functions (missingness before/after, distribution before/after, correlation heatmap, confusion matrix, model comparison, regression diagnostics, training curve, timeseries, ETL funnel) |
@@ -116,10 +124,11 @@ Reading the printed value labels rather than just the bar heights matters here: 
 
 Real monthly copper-mine production by company, published by COCHILCO (Chile's copper commission) as an institutional-report-shaped `.xlsx` — **150 real months** (2014-01 to 2026-06), 38 real mine/company columns after excluding subtotals.
 
-**Three real structural problems, none of them a missing value**:
+**Four real structural problems, none of them a missing value**:
 1. **Row-type contamination**: title rows, annual-summary rows (column A = a bare-text year like `"2024"`), and future-month template rows are mixed in with real monthly rows — filtered by the *type* of the date cell (a real `datetime` object vs. a string that merely *parses* like one; `pd.to_datetime("2024")` silently resolves to `2024-01-01` and would collide with the real January row).
 2. **Disguised subtotal columns**: beyond the obvious `Total Codelco`/`TOTAL CHILE`, three more columns (`Chuqui y R.Tomic`, `Angloamerican Sur`, `Capstone Copper`) are undocumented subtotals of other columns — confirmed by exact row-by-row numeric identity, not by name. Naively summing "all columns" overstated national production by ~2–3%.
 3. **Genuine structural zeros**: a mine not yet operating, or already closed, is reported as explicit `0.0`, never a blank cell — treated as real, not imputed.
+4. **Hidden rows and a hidden column, meaning opposite things**: the sheet has **144 hidden rows and 1 hidden column**, and they are not the same kind of finding. All 144 hidden rows are real monthly observations — COCHILCO collapses the monthly detail so only the annual subtotals show, leaving just the current year's 12 months visible — so dropping hidden rows "for tidiness" would delete 144 of the file's 156 months. The one hidden column, by contrast, is `Chuqui y R.Tomic`: one of the disguised subtotals from point 3 above. This is why `excel_io.read_sheet_expanding_merges` hides nothing by default and keeps the two axes on separate flags — a single `drop_hidden=True` would have done exactly the wrong thing on half the cases inside one file. Both facts are asserted against the real file in `tests/domains/test_mining_cochilco.py`.
 
 After excluding the 4 subtotal columns, the sum of the remaining 38 matches COCHILCO's own published `TOTAL CHILE` to within 1.1e-13 across all 150 rows.
 
@@ -136,7 +145,7 @@ After excluding the 4 subtotal columns, the sum of the remaining 38 matches COCH
 ![Missingness before/after](outputs/mining/figures/missingness_before_after.png)
 Same before/after bar-pair layout as the financial domain, but the result here is different and itself informative: both bars sit at (or near) 0% for the 38 real mine columns, because — as the writeup above explains — a mine that isn't producing reports an explicit `0.0`, not a blank cell. This chart is the visual confirmation that this domain's cleaning challenge really is structural (wrong rows/columns), not missing values, before any imputation logic gets a chance to (wrongly) treat those zeros as gaps.
 
-Contrast this deliberately with the financial domain's version of the same chart: there, the "before" bars were substantial (~32%) and the cleaning step's job was to *fill* real gaps; here, the "before" bars are already near-zero and the cleaning step's real job (row/column filtering) doesn't even show up on a missingness chart at all — a reminder that "the data looks clean by this one metric" and "the data is actually clean" are not the same claim, which is exactly why this domain's writeup leads with the three structural problems instead of a missingness number.
+Contrast this deliberately with the financial domain's version of the same chart: there, the "before" bars were substantial (~32%) and the cleaning step's job was to *fill* real gaps; here, the "before" bars are already near-zero and the cleaning step's real job (row/column filtering) doesn't even show up on a missingness chart at all — a reminder that "the data looks clean by this one metric" and "the data is actually clean" are not the same claim, which is exactly why this domain's writeup leads with the four structural problems instead of a missingness number.
 
 ![Production distribution before/after winsorizing](outputs/mining/figures/production_distribution_before_after.png)
 Raw (orange) vs. winsorized (blue) distribution of monthly production values, pooled across all 38 companies but winsorized independently *within* each company's own scale (k=3.0 IQR, non-zero months only) — a company producing hundreds of thousands of tons a month and one producing a few thousand are never compared against the same global cutoff, which would unfairly flag the larger operation's normal variation as "outlier."
@@ -229,7 +238,7 @@ The MLP and XGBoost bars are close enough (0.872 vs. 0.884 R²) to look almost i
 
 `src/domains/consulting_excel_dwh/` · [`notebooks/04_consulting_excel_dwh.ipynb`](notebooks/04_consulting_excel_dwh.ipynb)
 
-The **full** World Development Indicators file from the World Bank: a real ~80MB Excel, 6 sheets, **401,394 real country×indicator rows** in the `Data` sheet — exactly the kind of file a consultancy receives from a client or public agency and has to turn into a queryable warehouse, not a CSV that's already tidy.
+The **full** World Development Indicators file from the World Bank: a real ~80MB Excel, 6 sheets, **401,394 real country×indicator rows** in the `Data` sheet (`excel_io.inventory_workbook` reads that structure off the 80MB file in ~2 seconds without materializing it, and shows that the largest sheet in the workbook is not the data at all: `footnote`, with 842,972 rows) — exactly the kind of file a consultancy receives from a client or public agency and has to turn into a queryable warehouse, not a CSV that's already tidy.
 
 **The technique**: the `Data` sheet cannot be loaded whole into a DataFrame on every run (iterating it read-only alone takes ~50 seconds) — `fetch.py` streams it row by row (`openpyxl`, `read_only=True`) and only materializes 10 curated real indicators, a deliberate landing-zone→staging pattern for files too large to load naively. The `Country` sheet mixes real countries with regional/income aggregates ("World", "OECD members"...) distinguishable only by an empty `Region` field — filtered out before anything is modeled, or a "country" perfectly correlated with the average of the others would inflate the panel's apparent signal.
 
@@ -290,7 +299,7 @@ XGBoost edges out the MLP on every metric here too (0.938 vs. 0.922 R²), the sa
 pytest
 ```
 
-91 tests, all real (no mocks): 62 unit tests on the toolkit itself, plus real smoke tests per domain (schema/plausibility checks against actually-downloaded data, and each domain's central claim — e.g. "the best model beats the baseline by a real margin" — verified as a reproducible assertion, not just stated in this README).
+132 tests, all real (no mocks): 97 unit tests on the toolkit itself, plus real smoke tests per domain (schema/plausibility checks against actually-downloaded data, and each domain's central claim — e.g. "the best model beats the baseline by a real margin" — verified as a reproducible assertion, not just stated in this README).
 
 ## Installation
 

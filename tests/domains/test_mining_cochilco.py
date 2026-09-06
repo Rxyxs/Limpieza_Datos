@@ -6,6 +6,7 @@ tests si los archivos de `data/`/`outputs/` todavía no existen.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import openpyxl
@@ -20,6 +21,7 @@ from src.domains.mining_cochilco.clean import (
     build_clean_panel,
 )
 from src.domains.mining_cochilco.features import FEATURE_COLUMNS, SEASONAL_NAIVE_COLUMN, TARGET_COLUMN, build_features
+from src.toolkit.excel_io import hidden_rows_and_columns, read_sheet_expanding_merges
 
 ROOT = Path(__file__).resolve().parents[2]
 RAW_PATH = ROOT / "data" / "raw" / "mining" / RAW_FILENAME
@@ -65,6 +67,37 @@ def test_raw_file_has_nontrivial_row_count():
     # >150 filas: 6 de titulo + 1 encabezado + >=150 meses reales + resumenes
     # anuales intercalados + fila de cita.
     assert ws.max_row > 150
+
+
+def test_hidden_rows_of_the_raw_file_are_the_real_monthly_data():
+    # Hallazgo real del archivo publicado: COCHILCO colapsa (oculta) el detalle
+    # mensual para dejar a la vista solo los resumenes anuales. Es decir, TODAS
+    # las filas ocultas son observaciones mensuales reales, y las visibles son
+    # justamente las filas de resumen que el pipeline descarta. Descartar filas
+    # ocultas "por prolijidad" aca borraria casi todo el dato util -- por eso
+    # `read_sheet_expanding_merges` no oculta nada por defecto.
+    hidden_rows, _hidden_cols = hidden_rows_and_columns(RAW_PATH, sheet=SHEET_NAME)
+    raw = read_sheet_expanding_merges(RAW_PATH, sheet=SHEET_NAME)
+    monthly_rows = set(raw.index[raw[0].apply(lambda v: isinstance(v, datetime))])
+
+    assert len(hidden_rows) >= 140
+    assert set(hidden_rows).issubset(monthly_rows)
+    # Lo unico que queda visible del detalle mensual es el año en curso.
+    assert len(monthly_rows - set(hidden_rows)) <= 12
+
+
+def test_hidden_column_of_the_raw_file_is_a_disguised_subtotal():
+    # El mismo archivo usa "oculto" con el sentido OPUESTO en el otro eje: su
+    # unica columna oculta es "Chuqui y R.Tomic", uno de los subtotales
+    # encubiertos que clean.py ya excluye por identidad numerica. Ocultar marca
+    # redundancia en las columnas y detalle colapsado en las filas, asi que la
+    # decision tiene que tomarse por eje, nunca con una sola bandera.
+    _hidden_rows, hidden_cols = hidden_rows_and_columns(RAW_PATH, sheet=SHEET_NAME)
+    raw = read_sheet_expanding_merges(RAW_PATH, sheet=SHEET_NAME)
+    header = raw.iloc[6]  # fila 7 de Excel: el encabezado real
+
+    assert [str(header[c]).strip() for c in hidden_cols] == ["Chuqui y R.Tomic"]
+    assert "Chuqui y R.Tomic" in SUBTOTAL_COLUMNS
 
 
 # ---------------------------------------------------------------------------

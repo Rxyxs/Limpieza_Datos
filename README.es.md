@@ -17,6 +17,10 @@ flowchart TB
         TXT[text_cleaning.py]
         DT[datetime_cleaning.py]
         EXC[excel_cleaning.py]
+        EIO[excel_io.py]
+        EXP[excel_export.py]
+        SQL[sql_dump.py]
+        JSN[json_normalizer.py]
         ENC[encoding.py]
         VAL[validation.py]
         VIZ[viz.py]
@@ -44,6 +48,10 @@ flowchart TB
 | `text_cleaning.py` | Parseo de moneda/números (formato US y latinoamericano, marcadores de nota al pie), normalización de mayúsculas, unificación fuzzy de nombres |
 | `datetime_cleaning.py` | Parseo de fechas con timezone, reindexado de calendario con forward-fill |
 | `excel_cleaning.py` | Aplanado de encabezados multi-fila, detección de fila de encabezado, limpieza de notas al pie, reshape ancho-años a largo, remoción de filas subtotal |
+| `excel_io.py` | El **archivo** `.xlsx` antes de ser una tabla: inventario de hojas (incluidas las `hidden` / `veryHidden`), expansión de rangos combinados, reporte de filas/columnas ocultas, literales de error de Excel (`#N/A`, `#REF!`) con reporte por columna, conversión de números de serie (bug del año bisiesto 1900 y sistema 1904 de Mac), limpieza de caracteres invisibles, perfilado de tipo por celda |
+| `excel_export.py` | El dato limpio de vuelta como **entregable**: libro multi-hoja con encabezado congelado, autofiltro, anchos calculados, formatos numéricos declarados y una hoja `Diccionario` generada que documenta cada columna de cada hoja |
+| `sql_dump.py` | Dumps SQL (`.sql`) leídos y escritos sin levantar un motor de base de datos: corte de sentencias consciente de comillas, parseo de `CREATE TABLE` / `INSERT` multi-fila / `COPY ... FROM stdin` de `pg_dump`, inventario del dump sin materializarlo, y exportación por lotes a dialecto Postgres/MySQL/SQLite |
+| `json_normalizer.py` | Aplana una columna de JSON anidado a columnas tabulares, tolerando payloads inválidos o vacíos |
 | `encoding.py` | Codificación ordinal/one-hot, escalado z-score con transformación inversa |
 | `validation.py` | Validación de esquema fila por fila, genérica, vía pydantic |
 | `viz.py` | 9 funciones de gráficos reusables (missingness antes/después, distribución antes/después, heatmap de correlación, matriz de confusión, comparación de modelos, diagnóstico de regresión, curva de entrenamiento, series de tiempo, funnel de ETL) |
@@ -116,10 +124,11 @@ Leer las etiquetas numéricas impresas en vez de solo la altura de las barras im
 
 Producción mensual real de cobre de mina por empresa, publicada por COCHILCO en un `.xlsx` con forma de reporte institucional -- **150 meses reales** (2014-01 a 2026-06), 38 columnas reales de faena/empresa tras excluir subtotales.
 
-**Tres problemas estructurales reales, ninguno un valor faltante**:
+**Cuatro problemas estructurales reales, ninguno un valor faltante**:
 1. **Contaminación de tipo de fila**: filas de título, filas de resumen anual (columna A = un año como texto puro, ej. `"2024"`) y filas plantilla de meses futuros se mezclan con las filas mensuales reales -- se filtran por el TIPO de la celda de fecha (un objeto `datetime` real vs. un texto que solo *parece* fecha; `pd.to_datetime("2024")` resuelve silenciosamente a `2024-01-01` y colisionaría con la fila real de enero).
 2. **Columnas subtotal disfrazadas**: además de las obvias `Total Codelco`/`TOTAL CHILE`, tres columnas más (`Chuqui y R.Tomic`, `Angloamerican Sur`, `Capstone Copper`) son subtotales no documentados de otras columnas -- confirmado por identidad numérica exacta fila a fila, no por el nombre. Sumar "todas las columnas" ingenuamente infló la producción nacional calculada ~2-3%.
 3. **Ceros estructurales genuinos**: una faena que aún no operaba, o que ya cerró, se reporta como `0.0` explícito, nunca como celda vacía -- tratado como real, no imputado.
+4. **Filas ocultas y una columna oculta, que significan cosas opuestas**: la hoja tiene **144 filas ocultas y 1 columna oculta**, y no son el mismo tipo de hallazgo. Las 144 filas ocultas son todas observaciones mensuales reales -- COCHILCO colapsa el detalle mensual para dejar a la vista solo los subtotales anuales, y deja visibles apenas los 12 meses del año en curso -- así que descartar filas ocultas "por prolijidad" borraría 144 de los 156 meses del archivo. La única columna oculta, en cambio, es `Chuqui y R.Tomic`: uno de los subtotales disfrazados del punto 3. Por eso `excel_io.read_sheet_expanding_merges` no oculta nada por defecto y mantiene los dos ejes en banderas separadas -- un único `drop_hidden=True` habría hecho exactamente lo incorrecto en la mitad de los casos dentro de un mismo archivo. Ambos hechos se verifican contra el archivo real en `tests/domains/test_mining_cochilco.py`.
 
 Tras excluir las 4 columnas subtotal, la suma de las 38 restantes coincide con el `TOTAL CHILE` publicado por COCHILCO con una desviación máxima de 1.1e-13 en las 150 filas.
 
@@ -136,7 +145,7 @@ Tras excluir las 4 columnas subtotal, la suma de las 38 restantes coincide con e
 ![Missingness antes/después](outputs/mining/figures/missingness_before_after.png)
 Mismo formato de barras antes/después que el dominio financiero, pero acá el resultado es distinto y en sí mismo informativo: ambas barras quedan en (o cerca de) 0% para las 38 columnas reales de faena, porque -- como explica el texto arriba -- una faena que no está produciendo reporta un `0.0` explícito, no una celda vacía. Este gráfico es la confirmación visual de que el desafío de limpieza de este dominio es realmente estructural (filas/columnas equivocadas), no valores faltantes, antes de que cualquier lógica de imputación tenga la oportunidad de tratar esos ceros como huecos (incorrectamente).
 
-Contrastar esto deliberadamente con la versión del mismo gráfico en el dominio financiero: ahí, las barras "antes" eran sustanciales (~32%) y el trabajo del paso de limpieza era RELLENAR huecos reales; acá, las barras "antes" ya están cerca de cero y el trabajo real del paso de limpieza (filtrado de filas/columnas) ni siquiera aparece en un gráfico de missingness -- un recordatorio de que "el dato se ve limpio según esta métrica" y "el dato está realmente limpio" no son la misma afirmación, que es exactamente por qué el texto de este dominio arranca con los tres problemas estructurales en vez de con un número de missingness.
+Contrastar esto deliberadamente con la versión del mismo gráfico en el dominio financiero: ahí, las barras "antes" eran sustanciales (~32%) y el trabajo del paso de limpieza era RELLENAR huecos reales; acá, las barras "antes" ya están cerca de cero y el trabajo real del paso de limpieza (filtrado de filas/columnas) ni siquiera aparece en un gráfico de missingness -- un recordatorio de que "el dato se ve limpio según esta métrica" y "el dato está realmente limpio" no son la misma afirmación, que es exactamente por qué el texto de este dominio arranca con los cuatro problemas estructurales en vez de con un número de missingness.
 
 ![Distribución de producción antes/después de winsorizar](outputs/mining/figures/production_distribution_before_after.png)
 Distribución cruda (naranja) vs. winsorizada (azul) de los valores de producción mensual, agrupados entre las 38 empresas pero winsorizados de forma independiente DENTRO de la escala propia de cada empresa (IQR k=3.0, solo meses no-cero) -- una empresa que produce cientos de miles de toneladas al mes y una que produce unos pocos miles nunca se comparan contra el mismo corte global, que marcaría injustamente la variación normal de la operación más grande como "outlier".
@@ -229,7 +238,7 @@ Las barras de la MLP y de XGBoost quedan lo bastante cerca (0,872 vs. 0,884 R²)
 
 `src/domains/consulting_excel_dwh/` · [`notebooks/04_consulting_excel_dwh.ipynb`](notebooks/04_consulting_excel_dwh.ipynb)
 
-El World Development Indicators **completo** del Banco Mundial: un Excel real de ~80MB, 6 hojas, **401.394 filas reales país×indicador** en la hoja `Data` -- exactamente el tipo de archivo que una consultora recibe de un cliente u organismo público y tiene que transformar en un warehouse consultable, no un CSV ya tabular.
+El World Development Indicators **completo** del Banco Mundial: un Excel real de ~80MB, 6 hojas, **401.394 filas reales país×indicador** en la hoja `Data` (`excel_io.inventory_workbook` lee esa estructura del archivo de 80MB en ~2 segundos sin materializarlo, y deja ver que la hoja más grande del libro no es la de datos: `footnote`, con 842.972 filas) -- exactamente el tipo de archivo que una consultora recibe de un cliente u organismo público y tiene que transformar en un warehouse consultable, no un CSV ya tabular.
 
 **La técnica**: la hoja `Data` no se puede cargar completa a un DataFrame en cada corrida (iterarla en modo solo-lectura ya toma ~50 segundos) -- `fetch.py` la recorre fila por fila en streaming (`openpyxl`, `read_only=True`) y solo materializa 10 indicadores curados reales, un patrón deliberado de zona raw -> staging para archivos demasiado grandes para cargar ingenuamente. La hoja `Country` mezcla países reales con agregados regionales/de ingreso ("World", "OECD members"...) distinguibles solo por un campo `Region` vacío -- filtrados antes de modelar cualquier cosa, o un "país" perfectamente correlacionado con el promedio de los demás inflaría la señal aparente del panel.
 
@@ -290,7 +299,7 @@ XGBoost también le gana a la MLP en cada métrica acá (0,938 vs. 0,922 R²), e
 pytest
 ```
 
-91 tests, todos reales (sin mocks): 62 pruebas unitarias del toolkit, más pruebas de humo reales por dominio (chequeos de esquema/plausibilidad contra datos efectivamente descargados, y el reclamo central de cada dominio -- ej. "el mejor modelo supera al baseline por un margen real" -- verificado como una aserción reproducible, no solo afirmado en este README).
+132 tests, todos reales (sin mocks): 97 pruebas unitarias del toolkit, más pruebas de humo reales por dominio (chequeos de esquema/plausibilidad contra datos efectivamente descargados, y el reclamo central de cada dominio -- ej. "el mejor modelo supera al baseline por un margen real" -- verificado como una aserción reproducible, no solo afirmado en este README).
 
 ## Instalación
 
