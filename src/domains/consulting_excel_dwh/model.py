@@ -23,11 +23,17 @@ from torch import nn
 
 from src.domains.consulting_excel_dwh.features import FEATURE_COLUMNS, TARGET_COLUMN
 from src.toolkit.encoding import inverse_zscore, zscore_scale
+from src.toolkit.model_zoo import build_sequences, fit_elasticnet, fit_lstm, fit_random_forest
 from src.toolkit.torch_trainer import train_with_early_stopping
 
 ROOT = Path(__file__).resolve().parents[3]
 PROCESSED_DIR = ROOT / "data" / "processed" / "consulting"
 REPORTS_DIR = ROOT / "outputs" / "consulting"
+
+# Ventana de la LSTM: 5 años, por país. Es el único hiperparámetro
+# de forma que no se elige por validación, porque cambia el dataset (y no
+# solo el modelo) y haría incomparables los tamaños de train entre corridas.
+LSTM_WINDOW = 5
 
 
 class LifeExpectancyMLP(nn.Module):
@@ -127,6 +133,44 @@ def train_all_models(features_df: pd.DataFrame) -> dict:
     results["xgboost"] = _metrics(y_test, xgb_pred)
     results["xgboost"]["best_iteration"] = int(xgb_model.best_iteration)
 
+    # 4. Lineal regularizado (Ridge / ElasticNet / Lasso) sobre las features ya
+    # escaladas -- la penalización compara magnitudes de coeficientes, así que
+    # sin escalar elegiría por unidad de medida antes que por información real.
+    enet = fit_elasticnet(X_train_scaled, y_train, X_val_scaled, y_val, X_test_scaled)
+    results["elasticnet"] = {**_metrics(y_test, enet.predictions), **enet.metadata}
+
+    # 5. Random Forest: exactamente las mismas features crudas que XGBoost, con
+    # la estrategia opuesta (promediar árboles independientes y profundos en vez
+    # de encadenar árboles débiles que corrigen al anterior).
+    rf = fit_random_forest(
+        X_train_raw, y_train, X_val_raw, y_val, X_test_raw, feature_names=list(FEATURE_COLUMNS),
+    )
+    results["random_forest"] = {**_metrics(y_test, rf.predictions), **rf.metadata}
+
+    # 6. LSTM: lee las últimas LSTM_WINDOW observaciones como SECUENCIA, no como
+    # columnas de lag aplanadas. Se entrena solo con las filas de historia
+    # completa, pero predice sobre TODAS las filas de test, para que el conjunto
+    # de evaluación siga siendo idéntico al de los otros cinco modelos.
+    scaled_all = features_df.copy()
+    for col in FEATURE_COLUMNS:
+        mean, std = scale_stats[col]
+        scaled_all[col] = (scaled_all[col] - mean) / std
+    sequences, complete = build_sequences(
+        scaled_all, list(FEATURE_COLUMNS), window=LSTM_WINDOW,
+        time_column="anio", group_column="country_code",
+    )
+    train_pos = train_df.index.to_numpy()
+    val_pos = val_df.index.to_numpy()
+    test_pos = test_df.index.to_numpy()
+    lstm_fit = fit_lstm(
+        sequences[train_pos][complete[train_pos]], y_train[complete[train_pos]],
+        sequences[val_pos][complete[val_pos]], y_val[complete[val_pos]],
+        sequences[test_pos],
+    )
+    lstm_pred = lstm_fit.predictions
+    results["lstm"] = {**_metrics(y_test, lstm_pred), **lstm_fit.metadata}
+    results["lstm"]["n_test_con_relleno"] = int((~complete[test_pos]).sum())
+
     return {
         "results": results,
         "train_losses": train_result.train_losses,
@@ -135,6 +179,9 @@ def train_all_models(features_df: pd.DataFrame) -> dict:
         "y_test": y_test.tolist(),
         "mlp_pred": mlp_pred.tolist(),
         "xgb_pred": xgb_pred.tolist(),
+        "elasticnet_pred": enet.predictions.tolist(),
+        "rf_pred": rf.predictions.tolist(),
+        "lstm_pred": lstm_pred.tolist(),
         "baseline_pred": baseline_pred.tolist(),
         "n_train": len(train_df), "n_val": len(val_df), "n_test": len(test_df),
     }

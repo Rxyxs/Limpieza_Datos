@@ -12,6 +12,7 @@ import pandas as pd
 from src.domains.agriculture_worldbank.clean import _load_wide_panel
 from src.domains.agriculture_worldbank.features import COUNTRY_COLUMNS, FEATURE_COLUMNS, TARGET_COLUMN
 from src.toolkit import viz
+from src.toolkit.model_zoo import best_model_predictions
 from src.toolkit.missing_data import missingness_report
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -67,20 +68,18 @@ def main() -> None:
         title="MLP -- pérdida de entrenamiento vs. validación por época", best_epoch=metrics["best_epoch"],
     )
 
-    # 5. Real vs. predicho (test set, mejor de los 2 modelos entrenados por R²).
-    r2_by_model = {"mlp_pytorch": metrics["results"]["mlp_pytorch"]["r2"], "xgboost": metrics["results"]["xgboost"]["r2"]}
-    best_model = max(r2_by_model, key=r2_by_model.get)
-    best_pred = metrics["mlp_pred"] if best_model == "mlp_pytorch" else metrics["xgb_pred"]
+    # 5. Real vs. predicho (test set, el mejor de los 6 modelos por R² real).
+    best_model, best_pred = best_model_predictions(metrics)
     viz.plot_regression_diagnostics(
-        metrics["y_test"], best_pred, FIG_DIR / "regression_diagnostics.png",
+        metrics["y_test"], best_pred, FIG_DIR / "best_model_regression_diagnostics.png",
         title=f"{best_model} -- rendimiento real vs. predicho (holdout cronológico 2020-2025)",
         unit="(kg/ha)",
     )
 
-    # 6. Comparación baseline vs. MLP vs. XGBoost.
+    # 6. Comparación de los 6 modelos sobre el mismo split.
     viz.plot_model_comparison_bars(
         metrics["results"], FIG_DIR / "model_comparison.png", metrics=("r2", "rmse", "mae"),
-        title="Predicción del rendimiento de cereales: baseline por país vs. MLP vs. XGBoost",
+        title="Predicción del rendimiento de cereales: 6 modelos, mismo split cronológico",
     )
 
     n_figures = 5 + len(REPRESENTATIVE_COUNTRIES)  # missingness, correlación, entrenamiento, diagnóstico, comparación + 1 por país

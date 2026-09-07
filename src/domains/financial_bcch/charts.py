@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from src.toolkit import viz
+from src.toolkit.model_zoo import best_model_predictions
 
 ROOT = Path(__file__).resolve().parents[3]
 RAW_DIR = ROOT / "data" / "raw" / "financial"
@@ -71,16 +72,17 @@ def main() -> None:
         title="MLP -- pérdida de entrenamiento vs. validación por época", best_epoch=metrics["best_epoch"],
     )
 
-    # 6. Real vs. predicho (test set, MLP) -- retorno del día siguiente.
+    # 6. Real vs. predicho (test set, el mejor de los 6 modelos por R² real).
+    best_model, best_pred = best_model_predictions(metrics)
     viz.plot_regression_diagnostics(
-        metrics["y_test"], metrics["mlp_pred"], FIG_DIR / "mlp_regression_diagnostics.png",
-        title="MLP -- retorno real vs. predicho (holdout cronológico)",
+        metrics["y_test"], best_pred, FIG_DIR / "best_model_regression_diagnostics.png",
+        title=f"{best_model} -- retorno real vs. predicho (holdout cronológico)",
     )
 
-    # 7. Comparación baseline vs. MLP vs. XGBoost.
+    # 7. Comparación de los 6 modelos sobre el mismo split.
     viz.plot_model_comparison_bars(
         metrics["results"], FIG_DIR / "model_comparison.png", metrics=("r2", "rmse", "mae"),
-        title="Predicción del retorno del dólar al día siguiente: baseline vs. MLP vs. XGBoost",
+        title="Predicción del retorno del dólar al día siguiente: 6 modelos, mismo split",
     )
 
     print(f"7 gráficos -> {FIG_DIR}")

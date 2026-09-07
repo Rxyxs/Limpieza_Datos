@@ -214,3 +214,21 @@ def test_best_model_beats_seasonal_baseline_by_a_real_margin():
     baseline_r2 = metrics["results"]["baseline_estacional"]["r2"]
     xgb_r2 = metrics["results"]["xgboost"]["r2"]
     assert xgb_r2 > baseline_r2 + 0.1
+
+
+@pytest.mark.skipif(not METRICS_PATH.exists(), reason="run src/domains/mining_cochilco/model.py first")
+def test_sequence_model_loses_on_this_domains_tiny_dataset():
+    # Resultado negativo real, y esperado: este dominio entrena la LSTM con 84
+    # secuencias (95 meses de train menos la ventana de 12), tres ordenes de
+    # magnitud menos de lo que necesita una recurrente. Queda ultima de las
+    # cinco entrenadas y ni siquiera le gana al baseline estacional. Se afirma
+    # como test y no solo en el README: si algun dia deja de fallar, es porque
+    # cambio el dataset o el modelo, y ese texto del README hay que rehacerlo.
+    metrics = json.loads(METRICS_PATH.read_text(encoding="utf-8"))
+    lstm = metrics["results"]["lstm"]
+
+    assert lstm["n_secuencias_train"] < 100
+    assert lstm["r2"] < metrics["results"]["baseline_estacional"]["r2"]
+    assert lstm["r2"] < metrics["results"]["xgboost"]["r2"]
+    # Aun perdiendo, respeta el piso de epocas del proyecto.
+    assert lstm["epochs_run"] >= 100

@@ -130,7 +130,9 @@ def test_yield_lag1_matches_previous_year_within_same_country_no_leakage():
 
 def test_model_metrics_file_has_expected_shape():
     metrics = json.loads(_require(REPORTS_DIR / "metrics.json").read_text(encoding="utf-8"))
-    assert set(metrics["results"].keys()) == {"baseline_media_pais", "mlp_pytorch", "xgboost"}
+    assert set(metrics["results"].keys()) == {
+        "baseline_media_pais", "mlp_pytorch", "xgboost", "elasticnet", "random_forest", "lstm",
+    }
     for name, m in metrics["results"].items():
         assert {"r2", "rmse", "mae"}.issubset(m.keys())
 
@@ -157,6 +159,13 @@ def test_real_drivers_beat_per_country_baseline_by_a_real_margin():
     # Resultado meaningfully positivo (no solo "mejor que un baseline débil").
     assert mlp_r2 > 0.5
     assert xgb_r2 > 0.5
+
+    # Y no es un logro de una sola familia de modelos: los CINCO modelos
+    # entrenados le ganan al baseline por un margen grande, lo que dice que la
+    # señal está en el dato y no en la arquitectura elegida.
+    entrenados = {n: m["r2"] for n, m in metrics["results"].items() if not n.startswith("baseline")}
+    assert len(entrenados) == 5
+    assert min(entrenados.values()) > baseline_r2 + 0.5
 
 
 def test_mlp_did_not_collapse_to_dying_relu_failure_mode():

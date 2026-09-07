@@ -68,7 +68,9 @@ def test_best_model_beats_baseline_by_a_real_margin():
 
     metrics = json.loads((REPORTS_DIR / "metrics.json").read_text(encoding="utf-8"))
     baseline_r2 = metrics["results"]["baseline_media"]["r2"]
-    best_r2 = max(metrics["results"]["mlp_pytorch"]["r2"], metrics["results"]["xgboost"]["r2"])
+    best_r2 = max(
+        m["r2"] for name, m in metrics["results"].items() if not name.startswith("baseline")
+    )
     assert best_r2 > baseline_r2 + 0.5  # margen real y grande, no un empate casual
 
 

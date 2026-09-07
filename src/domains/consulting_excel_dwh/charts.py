@@ -11,6 +11,7 @@ import pandas as pd
 
 from src.domains.consulting_excel_dwh.features import FEATURE_COLUMNS, TARGET_COLUMN
 from src.toolkit import viz
+from src.toolkit.model_zoo import best_model_predictions
 
 ROOT = Path(__file__).resolve().parents[3]
 PROCESSED_DIR = ROOT / "data" / "processed" / "consulting"
@@ -83,16 +84,17 @@ def main() -> None:
         title="MLP -- pérdida de entrenamiento vs. validación por época", best_epoch=metrics["best_epoch"],
     )
 
-    # 6. Real vs. predicho (test set, XGBoost -- el mejor modelo real).
+    # 6. Real vs. predicho (test set, el mejor de los 6 modelos por R² real).
+    best_model, best_pred = best_model_predictions(metrics)
     viz.plot_regression_diagnostics(
-        metrics["y_test"], metrics["xgb_pred"], FIG_DIR / "xgb_regression_diagnostics.png",
-        title="XGBoost -- esperanza de vida real vs. predicha (holdout 2019-2024)", unit="(años)",
+        metrics["y_test"], best_pred, FIG_DIR / "best_model_regression_diagnostics.png",
+        title=f"{best_model} -- esperanza de vida real vs. predicha (holdout 2019-2024)", unit="(años)",
     )
 
-    # 7. Comparación baseline vs. MLP vs. XGBoost.
+    # 7. Comparación de los 6 modelos sobre el mismo split.
     viz.plot_model_comparison_bars(
         metrics["results"], FIG_DIR / "model_comparison.png", metrics=("r2", "rmse", "mae"),
-        title="Predicción de esperanza de vida del año siguiente: baseline vs. MLP vs. XGBoost",
+        title="Predicción de esperanza de vida del año siguiente: 6 modelos, mismo split",
     )
 
     print(f"7 gráficos -> {FIG_DIR}")

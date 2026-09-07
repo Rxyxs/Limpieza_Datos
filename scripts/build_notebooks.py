@@ -92,9 +92,12 @@ output = train_all_models(features_df)
 pd.DataFrame(output["results"]).T
 """),
     markdown("""
-**Resultado honesto**: los 3 enfoques (baseline, MLP, XGBoost) empatan
-alrededor de R²≈0 -- consistente con la Hipótesis de Mercados Eficientes: el
-retorno diario del dólar no tiene señal explotable con estas features. La MLP
+**Resultado honesto**: los 6 enfoques (baseline, MLP, XGBoost, lineal
+regularizado, Random Forest y LSTM) empatan alrededor de R²≈0 -- consistente
+con la Hipótesis de Mercados Eficientes: el retorno diario del dólar no tiene
+señal explotable con estas features. El lineal regularizado lo dice de la forma
+más directa: deja 1 de 14 coeficientes en pie y termina prediciendo poco más que
+la media de train. La MLP
 usa `LeakyReLU` en vez de `ReLU` a propósito -- con `ReLU` estándar la red
 colapsaba por "dying ReLU" (R² medido hasta -8746 antes de corregirlo, ver
 `src/domains/financial_bcch/model.py`).
@@ -106,8 +109,8 @@ colapsaba por "dying ReLU" (R² medido hasta -8746 antes de corregirlo, ver
     ("dolar_timeseries.png", "**USD/CLP observado, historial completo con media móvil de 20 días.**"),
     ("feature_correlation.png", "**Correlación entre features y el retorno del día siguiente** -- ninguna correlación individual es fuerte, coherente con el resultado del modelo."),
     ("mlp_training_curve.png", "**Curva de entrenamiento de la MLP** -- >=100 épocas reales, mejor checkpoint marcado."),
-    ("mlp_regression_diagnostics.png", "**Retorno real vs. predicho (holdout cronológico)** -- la nube dispersa alrededor de una línea plana es la firma visual de un R²≈0."),
-    ("model_comparison.png", "**Comparación baseline vs. MLP vs. XGBoost** -- los tres prácticamente empatan."),
+    ("best_model_regression_diagnostics.png", "**Retorno real vs. predicho, mejor de los 6 modelos (holdout cronológico)** -- la nube dispersa alrededor de una línea plana es la firma visual de un R²≈0."),
+    ("model_comparison.png", "**Comparación de los 6 modelos** -- los seis prácticamente empatan."),
 ]) + [
     markdown("""
 ## Conclusiones
@@ -197,8 +200,8 @@ distinto del "dying ReLU" del dominio financiero, mismo síntoma
     ("produccion_nacional_timeseries.png", "**Producción nacional mensual real de cobre, 2014-2026.**"),
     ("feature_correlation.png", "**Correlación entre features y la producción nacional del mes siguiente.**"),
     ("mlp_training_curve.png", "**Curva de entrenamiento de la MLP** -- >=100 épocas hasta activar early stopping (mejor época=111)."),
-    ("xgboost_regression_diagnostics.png", "**Producción real vs. predicha (XGBoost, holdout cronológico).**"),
-    ("model_comparison.png", "**Comparación baseline estacional vs. MLP vs. XGBoost.**"),
+    ("best_model_regression_diagnostics.png", "**Producción real vs. predicha, mejor de los 6 modelos (XGBoost, holdout cronológico).**"),
+    ("model_comparison.png", "**Comparación de los 6 modelos** -- gana XGBoost; la LSTM queda última, por debajo del baseline estacional, con solo 84 secuencias de entrenamiento."),
 ]) + [
     markdown("""
 ## Conclusiones
@@ -278,8 +281,8 @@ tendencia agronómica), a diferencia del dominio financiero.
     ("cereal_yield_timeseries_CHL.png", "**Rendimiento de cereales real, Chile, 1990-2025.**"),
     ("cereal_yield_timeseries_ARG.png", "**Rendimiento de cereales real, Argentina, 1990-2025.**"),
     ("mlp_training_curve.png", "**Curva de entrenamiento de la MLP** -- >=100 épocas, con early stopping real (mejor época marcada)."),
-    ("regression_diagnostics.png", "**Rendimiento real vs. predicho (holdout 2020-2025).**"),
-    ("model_comparison.png", "**Comparación baseline vs. MLP vs. XGBoost** -- ambos modelos reales le ganan al baseline por un margen amplio."),
+    ("best_model_regression_diagnostics.png", "**Rendimiento real vs. predicho, mejor de los 6 modelos (Random Forest, holdout 2020-2025).**"),
+    ("model_comparison.png", "**Comparación de los 6 modelos** -- los cinco modelos entrenados le ganan al baseline por un margen amplio; gana Random Forest."),
 ]) + [
     markdown("""
 ## Conclusiones
@@ -372,8 +375,8 @@ sistemáticamente en el período de test (2019-2024).
     ("esperanza_vida_paises.png", "**Esperanza de vida real, 1960-2024: Chile vs. Haití vs. Japón** -- incluye historia real, no filtrada (ver nota abajo)."),
     ("feature_correlation.png", "**Correlación entre indicadores socioeconómicos y la esperanza de vida del año siguiente.**"),
     ("mlp_training_curve.png", "**Curva de entrenamiento de la MLP** -- >=100 épocas."),
-    ("xgb_regression_diagnostics.png", "**Esperanza de vida real vs. predicha (XGBoost, holdout 2019-2024).**"),
-    ("model_comparison.png", "**Comparación baseline vs. MLP vs. XGBoost.**"),
+    ("best_model_regression_diagnostics.png", "**Esperanza de vida real vs. predicha, mejor de los 6 modelos (Random Forest, holdout 2019-2024).**"),
+    ("model_comparison.png", "**Comparación de los 6 modelos** -- gana Random Forest, con XGBoost y la LSTM muy cerca."),
 ]) + [
     markdown("""
 ## Conclusiones
@@ -609,12 +612,97 @@ print("round-trip idéntico celda a celda")
 vuelta[["fecha", "Chuqui y R.Tomic", "Centinela (súlfuros)"]].head(3)
 """),
     markdown("""
+## `model_zoo`: las tres familias de modelos que se suman a las tres de siempre
+
+Cada dominio compara ahora **6 modelos sobre el mismo split cronológico**: su
+baseline, el MLP, XGBoost, y los tres de `model_zoo` (lineal regularizado,
+Random Forest y una LSTM sobre secuencias). Los tres eligen hiperparámetros
+mirando el split de validación, nunca con `GridSearchCV`, que baraja las filas
+y entrenaría con datos posteriores a los que después evalúa.
+
+Acá se muestran sobre el panel minero real: 95 meses de train, 21 de
+validación, 21 de test.
+"""),
+    code("""
+import numpy as np
+from src.toolkit.model_zoo import build_sequences, fit_elasticnet, fit_random_forest
+from src.domains.mining_cochilco.features import FEATURE_COLUMNS, TARGET_COLUMN
+from src.domains.mining_cochilco.model import chronological_split
+from src.toolkit.encoding import zscore_scale
+
+minero = pd.read_csv("../data/processed/mining/mining_features.csv", parse_dates=["fecha"])
+tr, va, te = chronological_split(minero)
+y_tr, y_va, y_te = (d[TARGET_COLUMN].values for d in (tr, va, te))
+
+X_tr, stats = zscore_scale(tr[FEATURE_COLUMNS].reset_index(drop=True), FEATURE_COLUMNS)
+def escalar(d):
+    out = d[FEATURE_COLUMNS].reset_index(drop=True).copy()
+    for c in FEATURE_COLUMNS:
+        m, s = stats[c]
+        out[c] = (out[c] - m) / s
+    return out
+
+lineal = fit_elasticnet(X_tr, y_tr, escalar(va), y_va, escalar(te))
+bosque = fit_random_forest(
+    tr[FEATURE_COLUMNS], y_tr, va[FEATURE_COLUMNS], y_va, te[FEATURE_COLUMNS],
+    feature_names=list(FEATURE_COLUMNS),
+)
+print("lineal:", {k: v for k, v in lineal.metadata.items() if k != "val_rmse"})
+print("bosque:", bosque.metadata["features_mas_importantes"][:3])
+"""),
+    markdown("""
+### Las secuencias nunca cruzan un límite de grupo
+
+`build_sequences` alinea una secuencia a **cada** fila (rellenando las primeras
+de cada serie repitiendo su observación más antigua), para que el conjunto de
+test de la LSTM sea exactamente el mismo que el de los otros cinco modelos. Con
+`group_column`, la historia de un país nunca toma filas de otro -- la misma
+disciplina que `interpolate_within_group` aplica a la imputación.
+"""),
+    code("""
+panel_paises = pd.DataFrame({
+    "pais": ["CHL"] * 3 + ["ARG"] * 3,
+    "anio": [2000, 2001, 2002] * 2,
+    "valor": [1.0, 2.0, 3.0, 10.0, 20.0, 30.0],
+})
+con_grupo, completas = build_sequences(
+    panel_paises, ["valor"], window=3, time_column="anio", group_column="pais")
+sin_grupo, _ = build_sequences(panel_paises, ["valor"], window=3, time_column="anio")
+
+print("primera fila de ARG, agrupando :", con_grupo[3].ravel())
+print("primera fila de ARG, sin agrupar:", sin_grupo[3].ravel(), "<- contaminada con CHL")
+print("filas con historia completa:", completas.tolist())
+"""),
+    markdown("""
+### El resultado real de los 6 modelos, por dominio
+
+Leído directamente de los `metrics.json` que dejó cada pipeline. Vale la pena
+mirar las dos filas donde el ganador cambió al sumar los tres modelos nuevos, y
+la fila donde el modelo más sofisticado queda último.
+"""),
+    code("""
+import json
+
+filas = []
+for dominio, archivo in [
+    ("financiero", "financial"), ("minería", "mining"),
+    ("agricultura", "agriculture"), ("consultoría", "consulting"),
+]:
+    resultados = json.loads(open(f"../outputs/{archivo}/metrics.json", encoding="utf-8").read())["results"]
+    fila = {"dominio": dominio}
+    fila.update({nombre: round(m["r2"], 4) for nombre, m in resultados.items()})
+    fila["mejor"] = max(resultados, key=lambda n: resultados[n]["r2"])
+    filas.append(fila)
+
+pd.DataFrame(filas).set_index("dominio")
+"""),
+    markdown("""
 ## Conclusión
 
-Las mismas ~30 funciones de `src/toolkit/` (limpieza, outliers, texto, Excel,
-dumps SQL, encoding, visualización, entrenamiento) se reusan sin cambios en los
-4 dominios -- lo único que cambia entre dominios es el dato de entrada real y
-la interpretación del resultado, nunca la técnica.
+Las mismas ~35 funciones de `src/toolkit/` (limpieza, outliers, texto, Excel,
+dumps SQL, encoding, visualización, entrenamiento y modelos) se reusan sin
+cambios en los 4 dominios -- lo único que cambia entre dominios es el dato de
+entrada real y la interpretación del resultado, nunca la técnica.
 """),
 ]
 

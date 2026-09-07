@@ -12,6 +12,7 @@ import pandas as pd
 from src.domains.mining_cochilco.clean import GRAND_TOTAL_COLUMN, SHEET_NAME, SUBTOTAL_COLUMNS
 from src.domains.mining_cochilco.features import FEATURE_COLUMNS, TARGET_COLUMN
 from src.toolkit import viz
+from src.toolkit.model_zoo import best_model_predictions
 from src.toolkit.excel_cleaning import detect_header_row
 from src.toolkit.missing_data import missingness_report
 
@@ -89,17 +90,18 @@ def main() -> None:
         best_epoch=metrics["best_epoch"],
     )
 
-    # 6. Real vs. predicho (test set, XGBoost -- el mejor modelo real, ver metrics.json).
+    # 6. Real vs. predicho (test set, el mejor de los 6 modelos por R² real).
+    best_model, best_pred = best_model_predictions(metrics)
     viz.plot_regression_diagnostics(
-        metrics["y_test"], metrics["xgb_pred"], FIG_DIR / "xgboost_regression_diagnostics.png",
-        title="XGBoost -- producción nacional real vs. predicha (holdout cronológico)",
+        metrics["y_test"], best_pred, FIG_DIR / "best_model_regression_diagnostics.png",
+        title=f"{best_model} -- producción nacional real vs. predicha (holdout cronológico)",
         unit="(miles de T.M.)",
     )
 
-    # 7. Comparación baseline estacional vs. MLP vs. XGBoost.
+    # 7. Comparación de los 6 modelos sobre el mismo split.
     viz.plot_model_comparison_bars(
         metrics["results"], FIG_DIR / "model_comparison.png", metrics=("r2", "rmse", "mae"),
-        title="Predicción de producción nacional del mes siguiente: baseline vs. MLP vs. XGBoost",
+        title="Predicción de producción nacional del mes siguiente: 6 modelos, mismo split",
     )
 
     print(f"7 gráficos -> {FIG_DIR}")

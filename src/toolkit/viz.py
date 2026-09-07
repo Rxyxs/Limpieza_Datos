@@ -104,7 +104,9 @@ def plot_model_comparison_bars(
     x = np.arange(len(metrics))
     width = 0.8 / max(len(model_names), 1)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    # El ancho crece con la cantidad de modelos: con 6 modelos x 3 métricas son
+    # 18 barras etiquetadas, y a 8 pulgadas los números se pisan entre sí.
+    fig, ax = plt.subplots(figsize=(max(8, 1.6 * len(model_names)), 5))
     palette = sns.color_palette("deep", n_colors=len(model_names))
     for i, name in enumerate(model_names):
         values = [results_by_model[name][m] for m in metrics]
