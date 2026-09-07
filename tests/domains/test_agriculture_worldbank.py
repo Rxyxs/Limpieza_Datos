@@ -175,3 +175,27 @@ def test_mlp_did_not_collapse_to_dying_relu_failure_mode():
     (LeakyReLU) no se aplicó correctamente acá."""
     metrics = json.loads(_require(REPORTS_DIR / "metrics.json").read_text(encoding="utf-8"))
     assert metrics["results"]["mlp_pytorch"]["r2"] > -1.0
+
+
+def test_target_drift_explains_why_the_historical_mean_baseline_fails():
+    """El baseline de media por pais da R2 negativo porque el rendimiento de
+    cereales tiene tendencia real al alza: la media del periodo de
+    entrenamiento queda un desvio entero por debajo del periodo de test. Se
+    mide, en vez de atribuirlo."""
+    from src.domains.agriculture_worldbank.features import TARGET_COLUMN
+    from src.domains.agriculture_worldbank.model import chronological_split
+    from src.toolkit.drift import drift_report, target_shift
+
+    features_df = pd.read_csv(PROCESSED_DIR / "agriculture_features.csv")
+    train_df, _val_df, test_df = chronological_split(features_df)
+
+    desplazamiento = target_shift(train_df[TARGET_COLUMN], test_df[TARGET_COLUMN])
+    assert desplazamiento["media_actual"] > desplazamiento["media_expected"]
+    assert desplazamiento["desplazamiento_en_desvios"] > 0.8
+    assert desplazamiento["r2_de_predecir_la_media_vieja"] < 0
+
+    # Y no es solo el target: la mayoria de las features tambien se movieron de
+    # forma severa entre los dos periodos, que es el contexto real en el que
+    # los cinco modelos entrenados igual le ganan al baseline por mucho.
+    reporte = drift_report(train_df, test_df, columns=["cereal_yield_lag1", "fertilizer_kg_ha"])
+    assert (reporte["veredicto"] != "estable").any()

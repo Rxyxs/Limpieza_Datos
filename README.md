@@ -4,7 +4,20 @@
 
 A reusable data-cleaning-and-modeling **toolkit** (`src/toolkit/`), proven against **four real, unrelated public datasets** — Chilean finance, Chilean copper mining, South American agriculture, and a full 80MB World Bank Excel transformed into a real data warehouse. Every dataset is genuinely real (no synthetic data anywhere); every model trains for at least 100 real epochs; every cleaning technique lives once in the toolkit and gets reused, unchanged, across all four domains.
 
-This is the kind of work a data consultancy actually does: pull messy real data from wherever it lives (a REST API, an institutional Excel report, a full statistical-agency data dump), clean it with defensible, general techniques, and ship a model with honestly-reported results — including the negative ones.
+This is the kind of work a data consultancy actually does: pull messy real data from wherever it lives (a REST API, an institutional Excel report, a full statistical-agency data dump), clean it with defensible, general techniques, check the data quality claims that everyone assumes and nobody measures, and ship a model with honestly-reported results — including the negative ones.
+
+**In numbers**: 18 reusable toolkit modules · 4 independent real-data pipelines · 6 model families compared per domain under one chronological-split rule · 190 tests, none of them mocked.
+
+| | |
+|---|---|
+| [The reusable toolkit](#the-reusable-toolkit) | 18 domain-agnostic modules, and what each one is for |
+| [Data quality](#data-quality-what-the-toolkit-finds-in-this-projects-own-data) | Drift, join integrity and target leakage, measured on this project's own data |
+| [All four domains, side by side](#all-four-domains-side-by-side) | The 6×4 results table in one place |
+| [Domain 1 — Financial](#domain-1--financial-system-banco-central-de-chile) | A real corrupted value in the source, and six models that honestly find nothing |
+| [Domain 2 — Mining](#domain-2--mining-cochilco) | Four structural problems in an institutional `.xlsx`, none of them a missing value |
+| [Domain 3 — Agriculture](#domain-3--agriculture-world-bank) | Missingness with two different causes, one of them unfixable by interpolation |
+| [Domain 4 — Consulting](#domain-4--excel-cleaning-for-consultancies-data-lake--data-warehouse) | An 80MB Excel turned into a real DuckDB star schema |
+| [Running it end to end](#installation-and-running-it-end-to-end) | The exact command sequence, per domain |
 
 ## Architecture
 
@@ -26,6 +39,9 @@ flowchart TB
         VIZ[viz.py]
         TRAIN[torch_trainer.py]
         ZOO[model_zoo.py]
+        DFT[drift.py]
+        KEY[keys.py]
+        LEAK[leakage.py]
     end
 
     subgraph domains["src/domains/ — 4 independent real-data pipelines"]
@@ -58,8 +74,126 @@ flowchart TB
 | `viz.py` | 9 reusable chart functions (missingness before/after, distribution before/after, correlation heatmap, confusion matrix, model comparison, regression diagnostics, training curve, timeseries, ETL funnel) |
 | `torch_trainer.py` | A single early-stopping training loop (`min_epochs=100` floor, best-checkpoint restore) used by all 4 domains' PyTorch models |
 | `model_zoo.py` | Three more model families reused by all 4 domains: regularized linear (Ridge/ElasticNet/Lasso, with the `alpha` grid read **relative to the target's spread**, so one grid means the same thing across targets ranging from 0.005 to 5,000), Random Forest (bagging, the direct contrast against XGBoost's boosting), and an LSTM over sequences built **within group** — plus the selection rule all three share: fit on train, choose on the chronological validation split, never `GridSearchCV`, whose default shuffle would train on rows that come after the ones it then scores |
+| `drift.py` | Population Stability Index (bins taken from the **reference** sample, never from the new one — binning each sample by its own quantiles would report ≈0 exactly when the distribution moved most), two-sample KS, categorical drift with new/vanished categories, and `target_shift`, which predicts a mean-baseline's R² from the target's own movement |
+| `keys.py` | Candidate-key search, duplicate-key rows, orphan rows on each side of a join, observed join cardinality (`1:1`/`1:N`/`N:1`/`M:N`) with a row-multiplication factor, and `safe_merge` — a merge that raises instead of silently multiplying rows or silently dropping unmatched ones |
+| `leakage.py` | Target-leakage detection: per-feature univariate R², exact deterministic relations with the target (identical / offset / scaled, found by row-by-row numeric identity rather than by column name), and train/test row overlap. Says `fuga` only on deterministic evidence, `revisar` on a merely dominant predictor |
 
 See it applied standalone, across all four domains' real data, in [`notebooks/00_toolkit_demo.ipynb`](notebooks/00_toolkit_demo.ipynb).
+
+---
+
+## Data quality: what the toolkit finds in this project's own data
+
+The three quality modules were not written against toy examples and then pointed
+at the data — they were run on the four real pipelines, and what they found is
+reported here whether or not it flatters the results.
+
+### Every domain's baseline is negative because of measured drift, not a bug
+
+A baseline that predicts the training mean and scores a *negative* R² looks like
+an arithmetic error. It is not: it means the training-period mean has fallen
+outside the test period's typical range, which is the operational definition of
+target drift. `drift.target_shift` computes what that shift alone implies, before
+any model is trained:
+
+| Domain | Columns with severe drift | Target PSI | Target mean, train → test | R² implied by the shift | R² actually reported by the mean baseline |
+|---|---|---|---|---|---|
+| Financial | 3 of 14 | 0.004 | 0.000190 → 0.000004 | **-0.0012** | **-0.0012** |
+| Mining | 11 of 12 | 2.682 | 469.6 → 447.9 | -0.262 | 0.129 (seasonal baseline, not a mean) |
+| Agriculture | 12 of 21 | 4.411 | 3,334 → 4,524 | -1.143 | -0.327 (per-country mean, not a global one) |
+| Consulting | 15 of 20 | 1.361 | 62.47 → 72.02 | **-1.6075** | **-1.6075** |
+
+In the two domains whose baseline really is "predict the training mean", the
+number `target_shift` derives from the distribution alone **reproduces the
+published baseline R² to four decimals** — the negative result is fully accounted
+for by drift, with nothing left over to attribute to a bug. This is asserted as a
+test in `tests/domains/test_consulting_excel_dwh.py`, not just stated here. The
+other two rows differ for a documented reason: their baselines are deliberately
+harder than a global mean (seasonal-naive in mining, per-country mean in
+agriculture), so the global-mean figure is the wrong comparison and is shown to
+make that explicit rather than quietly omitted.
+
+The financial domain is the instructive opposite case. Its **features** drift
+hard — the policy rate `tpm` has a PSI of 10.5, its mean moving from 3.02% to
+4.85% between the two periods — while its **target** barely moves at all (PSI
+0.004). Severe feature drift and a stable target, and six model families that all
+land at R²≈0: the distribution of the inputs changed a great deal without that
+changing anything about how predictable tomorrow's return is.
+
+### The warehouse's referential integrity, verified rather than assumed
+
+`keys.find_candidate_keys` recovers the fact table's grain **from the data**,
+without reading the DDL: over 132,600 real rows, the only minimal unique
+combination is `(country_code, indicator_code, anio)` — exactly the grain the star
+schema declares. On `dim_country`, both `country_code` and `nombre_pais` come back
+as candidate keys, meaning no two of the 217 real countries share a name.
+
+`describe_join` then diagnoses the fact→dimension join before running it: `N:1`,
+zero orphans on either side, and a row-multiplication factor of exactly 1.0 — the
+join adds columns without adding rows. Run against the **raw** country sheet from
+the Excel instead (265 rows, regional and income aggregates included), the same
+function reports 48 orphan dimension rows: precisely the aggregates `clean.py`
+filtered out, recovered from the join itself without re-applying the filter.
+
+That is the check that matters, because `pd.merge` fails silently in both
+directions. It never raises when the right-hand key is duplicated — it multiplies
+rows, and every total computed afterwards is inflated by a factor that appears
+nowhere. It never warns when an inner join discards 40% of the rows because the
+keys do not match (a non-breaking space from Excel, leading zeros lost to a
+numeric read). `safe_merge` turns both into errors, opt-out by explicit argument.
+
+### The one leakage alert, and why it is not a leak
+
+Target leakage is the only error in this project whose symptom is a *good*
+result, which is why the check has to be run against the results that look right.
+Across the four domains, three come back clean and one raises an alert:
+
+| Domain | Verdict | Strongest single feature (univariate R²) |
+|---|---|---|
+| Financial | no signals | `dow`, 0.003 |
+| Mining | no signals | `mes`, 0.174 |
+| Agriculture | no signals | `cereal_yield_rolling3`, 0.932 |
+| Consulting | **review** | `esperanza_vida`, 0.985 |
+
+The consulting alert is the same finding the Random Forest's importances produced
+independently (97.2% of importance on one feature), reached here from the data
+instead of from a fitted model. The verdict is deliberately `revisar` and not
+`fuga`: a univariate R² of 0.985 is consistent with a leak *and* with legitimate
+autocorrelation, and the two are told apart by looking for a deterministic
+relation, not by the size of the number. There is none — this year's life
+expectancy is genuinely available when predicting next year's — so the module
+reports it as something to check and refuses to call it a leak. Calling every
+dominant predictor a leak is how a diagnostic tool becomes a source of false
+positives that people learn to ignore.
+
+Two more results from the same check, both negative and both worth having: no
+feature in any domain is an exact function of its target, and **no domain shares a
+single row between train and test** — the confirmation that all four chronological
+splits are built correctly.
+
+---
+
+## All four domains, side by side
+
+The same six models, the same chronological-split rule, four unrelated real
+datasets. R² on each domain's held-out test period:
+
+| Model | Financial | Mining | Agriculture | Consulting |
+|---|---|---|---|---|
+| Baseline | -0.0012 | 0.129 | -0.327 | -1.608 |
+| MLP (PyTorch) | **0.0040** | 0.252 | 0.872 | 0.922 |
+| XGBoost | -0.0021 | **0.515** | 0.884 | 0.938 |
+| ElasticNet | -0.0023 | 0.240 | 0.842 | 0.928 |
+| Random Forest | -0.0032 | 0.479 | **0.904** | **0.943** |
+| LSTM | -0.0083 | 0.026 | 0.799 | 0.937 |
+| *Test rows* | *746* | *21* | *54* | *815* |
+
+Read across rather than down. No model family wins everywhere: Random Forest
+takes two domains, XGBoost one, and the financial domain is nominally the MLP's
+only because every model there sits at zero. Read down instead and the spread
+within a domain says how much genuine signal there is: 0.012 of total spread in
+the financial domain (nothing to find), against 0.489 in mining (where the choice
+of model matters a great deal, on only 95 training months).
 
 ---
 
@@ -321,20 +455,65 @@ With six models the ranking no longer has a single winner across the project: **
 pytest
 ```
 
-147 tests, all real (no mocks): 111 unit tests on the toolkit itself, plus real smoke tests per domain (schema/plausibility checks against actually-downloaded data, and each domain's central claim — e.g. "the best model beats the baseline by a real margin" — verified as a reproducible assertion, not just stated in this README).
+190 tests, all real (no mocks): 148 unit tests on the toolkit itself, plus real smoke tests per domain (schema/plausibility checks against actually-downloaded data, and each domain's central claim — e.g. "the best model beats the baseline by a real margin" — verified as a reproducible assertion, not just stated in this README).
 
-## Installation
+## Installation and running it end to end
 
 ```bash
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt   # Windows
+pip install -r requirements.txt                  # Linux / macOS
 ```
 
-Then, per domain: `python -m src.domains.<domain>.fetch`, then `.clean`, `.features`, `.model`, `.charts` — or open the matching notebook, which runs the same pipeline with narrative.
+Each domain is a four-stage pipeline that must run in order, because each stage
+reads what the previous one wrote to `data/`:
+
+```bash
+python -m src.domains.mining_cochilco.fetch      # descarga el .xlsx real de COCHILCO
+python -m src.domains.mining_cochilco.clean      # -> data/processed/mining/*.csv
+python -m src.domains.mining_cochilco.features   # lags, rolling, target sin look-ahead
+python -m src.domains.mining_cochilco.model      # 6 modelos -> outputs/mining/metrics.json
+python -m src.domains.mining_cochilco.charts     # -> outputs/mining/figures/*.png
+```
+
+The same five commands work for `financial_bcch`, `agriculture_worldbank` and
+`consulting_excel_dwh`. Two of the four need the network on the `fetch` stage
+(`mindicador.cl` and the World Bank API); `consulting_excel_dwh` downloads an
+80MB Excel and takes the longest by a wide margin.
+
+Then `pytest` for the full suite, and `python scripts/build_notebooks.py`
+followed by `python scripts/execute_notebooks.py <notebook>.ipynb` to regenerate
+the notebooks with their real outputs.
+
+Nothing under `data/` is committed (raw downloads, processed CSVs and the DuckDB
+warehouse are all gitignored); everything under `outputs/` is, so the figures and
+metrics in this README are the real artifacts of the last full run.
+
+## The real data behind each domain
+
+| Domain | Source | Access | Volume | Central cleaning problem |
+|---|---|---|---|---|
+| Financial | `mindicador.cl` (mirrors Banco Central de Chile series) | Public REST API, no auth | 4,990 daily rows, 2013–2026 | Frequency alignment (daily vs. monthly) + one real corrupted source value |
+| Mining | COCHILCO, Chilean Copper Commission | Institutional `.xlsx` | 150 real months × 38 mines | Row/column structure: annual subtotals, template rows, disguised subtotal columns, 144 hidden rows |
+| Agriculture | World Bank Open Data | Public REST API, no auth | 8 indicators × 9 countries × 36 years | Missingness with two different causes, one unfixable by interpolation |
+| Consulting | World Bank WDI, full release | ~80MB `.xlsx`, 6 sheets | 401,394 rows in the `Data` sheet | Too large to load naively; regional aggregates mixed in with countries |
+
+## Repository layout
+
+```
+src/toolkit/     18 reusable modules — the black box, domain-agnostic
+src/domains/     4 independent pipelines: fetch → clean → features → model → charts
+tests/toolkit/   unit tests of the toolkit
+tests/domains/   real smoke tests: each domain's central claim as an assertion
+notebooks/       one narrative notebook per domain, plus the toolkit demo
+outputs/         committed figures and metrics.json of the last real run
+scripts/         build tooling (notebook generation and execution)
+data/            gitignored: raw downloads, processed CSVs, DuckDB warehouse
+```
 
 ## Stack
 
-Python · pandas · PyTorch · XGBoost · scikit-learn · DuckDB · openpyxl · rapidfuzz · pydantic · matplotlib/seaborn · Jupyter · mindicador.cl · COCHILCO · World Bank Open Data / WDI
+Python · pandas · NumPy/SciPy · PyTorch · XGBoost · scikit-learn · DuckDB · openpyxl · rapidfuzz · pydantic · matplotlib/seaborn · Jupyter · mindicador.cl · COCHILCO · World Bank Open Data / WDI
 
 ## Author
 

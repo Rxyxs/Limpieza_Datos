@@ -697,12 +697,122 @@ for dominio, archivo in [
 pd.DataFrame(filas).set_index("dominio")
 """),
     markdown("""
+## `drift`: por qué los baselines de "predecir el promedio" dan R² negativo
+
+Un R² negativo del baseline se ve como un error de cálculo y no lo es: es
+**drift del target**. `target_shift` lo mide antes de entrenar nada, y el R² que
+predice a partir solo del desplazamiento de la media coincide con el R² real que
+después reporta el baseline en `metrics.json`.
+"""),
+    code("""
+import json
+from src.toolkit.drift import drift_report, target_shift
+from src.domains.consulting_excel_dwh.features import FEATURE_COLUMNS as CON_F, TARGET_COLUMN as CON_T
+from src.domains.consulting_excel_dwh.model import chronological_split as con_split
+
+consultoria = pd.read_csv("../data/processed/consulting/consulting_features.csv")
+tr_c, va_c, te_c = con_split(consultoria)
+
+desplazamiento = target_shift(tr_c[CON_T], te_c[CON_T])
+r2_baseline = json.load(open("../outputs/consulting/metrics.json", encoding="utf-8"))["results"]["baseline_media"]["r2"]
+
+print(f"media del target: {desplazamiento['media_expected']:.2f} -> {desplazamiento['media_actual']:.2f} años")
+print(f"desplazamiento: {desplazamiento['desplazamiento_en_desvios']:+.2f} desvíos | PSI {desplazamiento['psi']:.3f}")
+print(f"R² que implica ese desplazamiento : {desplazamiento['r2_de_predecir_la_media_vieja']:.4f}")
+print(f"R² real del baseline en metrics.json: {r2_baseline:.4f}")
+"""),
+    markdown("""
+El reporte por columna ordena por severidad, porque la pregunta operativa no es
+"¿hay drift?" (casi siempre hay algo) sino "¿qué columna miro primero?". PSI y
+KS van juntos a propósito: KS trae p-valor pero con muestras grandes marca como
+significativo cualquier movimiento minúsculo; el PSI no tiene p-valor pero mide
+la magnitud real del desplazamiento.
+"""),
+    code("""
+reporte = drift_report(tr_c, te_c, columns=list(CON_F))
+print(reporte["veredicto"].value_counts().to_string())
+reporte.head(5)[["columna", "psi", "veredicto", "ks_pvalor", "media_expected", "media_actual"]]
+"""),
+    markdown("""
+## `keys`: la cardinalidad real de un join, antes de ejecutarlo
+
+`pd.merge` no lanza ninguna excepción cuando la clave derecha está duplicada:
+multiplica filas en silencio, y todo agregado posterior queda inflado. Acá, sobre
+el warehouse WDI real, la búsqueda de claves candidatas **redescubre el grano de
+la tabla de hechos desde el dato**, sin mirar el DDL.
+"""),
+    code("""
+import duckdb
+from src.toolkit.keys import describe_join, find_candidate_keys, find_orphans
+
+con = duckdb.connect("../data/processed/consulting/wdi_warehouse.duckdb", read_only=True)
+hechos = con.execute("select * from fact_indicator_value").fetchdf()
+dim_pais = con.execute("select * from dim_country").fetchdf()
+con.close()
+
+print("grano de la tabla de hechos:", find_candidate_keys(hechos, max_columns=3))
+print("claves de dim_country     :", find_candidate_keys(dim_pais, max_columns=1))
+pd.Series(describe_join(hechos, dim_pais, on="country_code"))
+"""),
+    markdown("""
+Contra la dimensión **cruda** del Excel (265 filas, con agregados regionales
+incluidos), las filas huérfanas del lado de la dimensión son exactamente los
+agregados que `clean.py` descartó -- un número que sale del join, sin volver a
+aplicar el filtro.
+"""),
+    code("""
+crudo = pd.read_csv("../data/raw/consulting/wdi_country_dim.csv").rename(columns={"Country Code": "country_code"})
+_sin_pais, dim_sin_uso = find_orphans(hechos, crudo[["country_code"]].drop_duplicates(), on="country_code")
+
+print(f"paises en la dimension cruda : {crudo['country_code'].nunique()}")
+print(f"paises reales en el warehouse: {len(dim_pais)}")
+print(f"filas de dimension sin ningun hecho asociado: {len(dim_sin_uso)}")
+"""),
+    markdown("""
+## `leakage`: el chequeo que hay que correr contra el resultado *bueno*
+
+La fuga de target es el único error de este proyecto cuyo síntoma es un
+resultado bueno: un R² alto no dispara ninguna alarma. El Random Forest de
+consultoría pone el 97,2% de su importancia en una sola feature -- una firma
+numérica idéntica a la de una fuga. El chequeo la marca, pero como `revisar` y
+no como `fuga`, porque no hay ninguna relación determinística con el target: la
+esperanza de vida del año en curso está genuinamente disponible al predecir la
+del siguiente.
+"""),
+    code("""
+from src.toolkit.leakage import leakage_report
+
+fuga = leakage_report(tr_c[CON_F], tr_c[CON_T], X_test=te_c[CON_F])
+print("veredicto:", fuga["veredicto"])
+print("sospechosas:", fuga["features_sospechosas"])
+print("relaciones exactas con el target:", fuga["relaciones_exactas"])
+print("filas compartidas entre train y test:", fuga["solapamiento_train_test"]["n_solapadas"])
+fuga["poder_individual"].head(4)
+"""),
+    markdown("""
+Y el contraste, sobre una fuga fabricada a propósito (el único dato sintético de
+este notebook, marcado como tal): una columna que **es** el target en otras
+unidades. Acá el veredicto sí es `fuga`, porque la evidencia es determinística y
+no una correlación alta.
+"""),
+    code("""
+from src.toolkit.leakage import exact_relations
+
+y_demo = tr_c[CON_T].to_numpy()[:500]
+X_demo = pd.DataFrame({
+    "driver_legitimo": tr_c["gasto_salud_pct_pib"].to_numpy()[:500],
+    "target_en_meses": y_demo * 12,   # el target, en otras unidades
+})
+print(exact_relations(X_demo, y_demo).to_string(index=False))
+print("veredicto:", leakage_report(X_demo, y_demo)["veredicto"])
+"""),
+    markdown("""
 ## Conclusión
 
-Las mismas ~35 funciones de `src/toolkit/` (limpieza, outliers, texto, Excel,
-dumps SQL, encoding, visualización, entrenamiento y modelos) se reusan sin
-cambios en los 4 dominios -- lo único que cambia entre dominios es el dato de
-entrada real y la interpretación del resultado, nunca la técnica.
+Las mismas ~45 funciones de `src/toolkit/` (limpieza, outliers, texto, Excel,
+dumps SQL, encoding, calidad de datos, visualización, entrenamiento y modelos)
+se reusan sin cambios en los 4 dominios -- lo único que cambia entre dominios es
+el dato de entrada real y la interpretación del resultado, nunca la técnica.
 """),
 ]
 
