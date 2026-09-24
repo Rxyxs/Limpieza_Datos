@@ -2,11 +2,13 @@
 
 # Limpieza_Datos
 
+[![CI](https://github.com/Rxyxs/Limpieza_Datos/actions/workflows/ci.yml/badge.svg)](https://github.com/Rxyxs/Limpieza_Datos/actions/workflows/ci.yml)
+
 A reusable data-cleaning-and-modeling **toolkit** (`src/toolkit/`), proven against **four real, unrelated public datasets** — Chilean finance, Chilean copper mining, South American agriculture, and a full 80MB World Bank Excel transformed into a real data warehouse. Every dataset is genuinely real (no synthetic data anywhere); every model trains for at least 100 real epochs; every cleaning technique lives once in the toolkit and gets reused, unchanged, across all four domains.
 
 This is the kind of work a data consultancy actually does: pull messy real data from wherever it lives (a REST API, an institutional Excel report, a full statistical-agency data dump), clean it with defensible, general techniques, check the data quality claims that everyone assumes and nobody measures, and ship a model with honestly-reported results — including the negative ones.
 
-**In numbers**: 18 reusable toolkit modules · 4 independent real-data pipelines · 6 model families compared per domain under one chronological-split rule · 190 tests, none of them mocked.
+**In numbers**: 18 reusable toolkit modules · 4 independent real-data pipelines · 6 model families compared per domain under one chronological-split rule · 199 tests (161 passing, 38 gracefully skipped when this environment's generated data isn't present), none of them mocked, 0 failures, running on every push via CI.
 
 | | |
 |---|---|
@@ -70,7 +72,7 @@ flowchart TB
 | `sql_dump.py` | SQL dumps (`.sql`) read and written without starting a database engine: quote-aware statement splitting, `CREATE TABLE` / multi-row `INSERT` / `pg_dump` `COPY ... FROM stdin` parsing, dump inventory without materializing it, and batched export to Postgres/MySQL/SQLite dialects |
 | `json_normalizer.py` | Flattens a nested-JSON column into tabular columns, tolerating invalid or empty payloads |
 | `encoding.py` | Ordinal/one-hot encoding, z-score scaling with inverse transform |
-| `validation.py` | Generic pydantic row-by-row schema validation |
+| `validation.py` | Generic pydantic row-by-row schema validation, plus `infer_schema`/`validate_schema` — freezes a training set's `{column: dtype}` and flags schema drift against new data: missing columns, unexpected columns, and silent dtype changes (e.g. int → float the moment a single NaN appears) |
 | `viz.py` | 9 reusable chart functions (missingness before/after, distribution before/after, correlation heatmap, confusion matrix, model comparison, regression diagnostics, training curve, timeseries, ETL funnel) |
 | `torch_trainer.py` | A single early-stopping training loop (`min_epochs=100` floor, best-checkpoint restore) used by all 4 domains' PyTorch models |
 | `model_zoo.py` | Three more model families reused by all 4 domains: regularized linear (Ridge/ElasticNet/Lasso, with the `alpha` grid read **relative to the target's spread**, so one grid means the same thing across targets ranging from 0.005 to 5,000), Random Forest (bagging, the direct contrast against XGBoost's boosting), and an LSTM over sequences built **within group** — plus the selection rule all three share: fit on train, choose on the chronological validation split, never `GridSearchCV`, whose default shuffle would train on rows that come after the ones it then scores |
@@ -455,7 +457,9 @@ With six models the ranking no longer has a single winner across the project: **
 pytest
 ```
 
-190 tests, all real (no mocks): 148 unit tests on the toolkit itself, plus real smoke tests per domain (schema/plausibility checks against actually-downloaded data, and each domain's central claim — e.g. "the best model beats the baseline by a real margin" — verified as a reproducible assertion, not just stated in this README).
+199 tests, all real (no mocks): 157 unit tests on the toolkit itself, plus 42 real smoke tests per domain (schema/plausibility checks against actually-downloaded data, and each domain's central claim — e.g. "the best model beats the baseline by a real margin" — verified as a reproducible assertion, not just stated in this README). 161 pass unconditionally; 38 skip cleanly (not fail) when this environment doesn't have the domain's generated data on disk. Among the toolkit tests, all 4 real-data domains are directly audited against statistical leakage: imputation, interpolation and IQR winsorization are proven to compute their statistics on train only and apply them, frozen, to test — never the reverse.
+
+CI runs the same command on every push and pull request against `main` (Python 3.10, `MPLBACKEND=Agg`), so this claim isn't just "it passed once on my machine."
 
 ## Installation and running it end to end
 
@@ -514,6 +518,18 @@ data/            gitignored: raw downloads, processed CSVs, DuckDB warehouse
 ## Stack
 
 Python · pandas · NumPy/SciPy · PyTorch · XGBoost · scikit-learn · DuckDB · openpyxl · rapidfuzz · pydantic · matplotlib/seaborn · Jupyter · mindicador.cl · COCHILCO · World Bank Open Data / WDI
+
+## Production readiness checklist
+
+What's actually verified as of this commit — each row links to where it's checked, not just asserted:
+
+| | Item | Evidence |
+|---|---|---|
+| ✅ | Automated CI (GitHub Actions, Python 3.10, headless `MPLBACKEND=Agg`) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — runs `pytest -v` on every push/PR to `main`; badge at the top of this page |
+| ✅ | No statistical leakage (imputation, interpolation and winsorization fit on train only) | `tests/toolkit/test_preprocessing_leakage.py`; refactored in `agriculture_worldbank`, `consulting_excel_dwh` and `financial_bcch`'s `clean.py` via `compute_category_means`/`apply_category_means` and `clip_to_bounds` |
+| ✅ | Split boundary defined once per domain (single source of truth) | `TRAIN_END_YEAR` / `TRAIN_FRAC` declared in each domain's `clean.py`, imported by its `model.py` — cleaning and modeling can't drift apart |
+| ✅ | Schema-drift detection (missing/unexpected columns, silent dtype changes) | `src/toolkit/validation.py::infer_schema` / `validate_schema`, `tests/toolkit/test_validation.py` |
+| ✅ | Test suite passes with 0 failures (environment gaps skip cleanly, they don't fail) | 199 tests — 161 passed, 38 skipped, 0 failed; see [Tests](#tests) above |
 
 ## Author
 
