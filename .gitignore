@@ -3,6 +3,9 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 .env
+.env.local
+.env.*
+!.env.example
 /data/
 *.csv
 *.xlsx
@@ -11,3 +14,14 @@ __pycache__/
 *.duckdb
 *.sql
 .DS_Store
+
+# Editor / SO
+.vscode/
+.idea/
+Thumbs.db
+
+# Binarios compilados
+*.so
+*.dylib
+*.dll
+*.exe
