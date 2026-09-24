@@ -487,9 +487,11 @@ python -m src.domains.mining_cochilco.charts     # -> outputs/mining/figures/*.p
 ```
 
 Los mismos cinco comandos sirven para `financial_bcch`, `agriculture_worldbank` y
-`consulting_excel_dwh`. Dos de los cuatro necesitan red en la etapa `fetch`
-(`mindicador.cl` y la API del Banco Mundial); `consulting_excel_dwh` descarga un
-Excel de 80MB y es por lejos el más lento.
+`consulting_excel_dwh`. Los cuatro necesitan red en la etapa `fetch` (COCHILCO,
+`mindicador.cl`, y la API del Banco Mundial dos veces -- la API de indicadores
+para `agriculture_worldbank`, la descarga masiva del Excel WDI para
+`consulting_excel_dwh`); esta última descarga un Excel de 80MB y es por lejos
+la más lenta.
 
 Después, `pytest` para la suite completa, y `python scripts/build_notebooks.py`
 seguido de `python scripts/execute_notebooks.py <notebook>.ipynb` para regenerar

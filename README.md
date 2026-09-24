@@ -481,9 +481,11 @@ python -m src.domains.mining_cochilco.charts     # -> outputs/mining/figures/*.p
 ```
 
 The same five commands work for `financial_bcch`, `agriculture_worldbank` and
-`consulting_excel_dwh`. Two of the four need the network on the `fetch` stage
-(`mindicador.cl` and the World Bank API); `consulting_excel_dwh` downloads an
-80MB Excel and takes the longest by a wide margin.
+`consulting_excel_dwh`. All four need the network on the `fetch` stage
+(COCHILCO, `mindicador.cl`, and the World Bank API twice — the indicators API
+for `agriculture_worldbank`, the bulk WDI Excel download for
+`consulting_excel_dwh`); that last one downloads an 80MB file and takes the
+longest by a wide margin.
 
 Then `pytest` for the full suite, and `python scripts/build_notebooks.py`
 followed by `python scripts/execute_notebooks.py <notebook>.ipynb` to regenerate
