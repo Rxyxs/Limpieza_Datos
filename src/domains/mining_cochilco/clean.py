@@ -170,6 +170,16 @@ def build_clean_panel() -> tuple[pd.DataFrame, dict]:
     # tiene tendencia genuina (ley del mineral que declina, expansiones,
     # huelgas, mantenciones programadas) -- un k agresivo trataría esa
     # variación operacional real como si fuera un error de captura.
+    # Nota sobre fuga estadística (auditoría del Día 22/23): esta llamada usa
+    # límites IQR calculados sobre TODO el panel, incluido el período que
+    # después será test en model.py -- pero, a diferencia de la winsorización
+    # de financial_bcch, el DataFrame recortado se descarta (`_`): ninguna
+    # columna winsorizada llega a `wide`/`panel`, y por lo tanto ninguna llega
+    # al modelo. Es un conteo diagnóstico para el reporte, no una
+    # transformación que un modelo consuma -- no hay nada que fugue hacia un
+    # split de entrenamiento, así que no necesita el mismo arreglo fit/apply
+    # que sí aplicó en `agriculture_worldbank`, `consulting_excel_dwh` y
+    # `financial_bcch`.
     long_df = wide.melt(id_vars=[DATE_COLUMN], value_vars=company_cols, var_name="empresa", value_name="produccion_miles_ton")
     long_df = strip_whitespace(long_df, ["empresa"])
     long_df = normalize_case(long_df, ["empresa"])

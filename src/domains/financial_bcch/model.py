@@ -24,6 +24,7 @@ import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from torch import nn
 
+from src.domains.financial_bcch.clean import TRAIN_FRAC
 from src.domains.financial_bcch.features import FEATURE_COLUMNS, TARGET_COLUMN
 from src.toolkit.encoding import zscore_scale
 from src.toolkit.model_zoo import build_sequences, fit_elasticnet, fit_lstm, fit_random_forest
@@ -62,7 +63,7 @@ class ReturnMLP(nn.Module):
         return self.net(x)
 
 
-def chronological_split(df: pd.DataFrame, train_frac: float = 0.70, val_frac: float = 0.15):
+def chronological_split(df: pd.DataFrame, train_frac: float = TRAIN_FRAC, val_frac: float = 0.15):
     n = len(df)
     train_end = int(n * train_frac)
     val_end = int(n * (train_frac + val_frac))

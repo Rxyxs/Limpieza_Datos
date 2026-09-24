@@ -24,12 +24,25 @@ from pathlib import Path
 import pandas as pd
 
 from src.domains.agriculture_worldbank.fetch import INDICATORS, RAW_DIR
-from src.toolkit.missing_data import impute_numeric_by_category, interpolate_within_group, missingness_report
+from src.toolkit.missing_data import (
+    apply_category_means,
+    compute_category_means,
+    interpolate_within_group,
+    missingness_report,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 PROCESSED_DIR = ROOT / "data" / "processed" / "agriculture"
 
 INDICATOR_SLUGS = list(INDICATORS.values())
+
+# Único límite train/test del dominio, definido acá (no en model.py) porque la
+# limpieza tiene que respetarlo tanto como el modelo: interpolar o imputar con
+# datos de después de este año hacia una fila de antes sería fuga estadística
+# -- el mismo tipo de error, solo que en el paso de limpieza en vez del de
+# escalado. `model.py` importa esta misma constante para su split; no hay dos
+# números que puedan desincronizarse.
+TRAIN_END_YEAR = 2015
 
 
 def _load_wide_panel() -> pd.DataFrame:
@@ -59,12 +72,20 @@ def build_clean_panel() -> tuple[pd.DataFrame, dict]:
     print(before_missing.to_string(index=False))
 
     # Paso 1: interpolar cada indicador DENTRO de cada país (nunca a través de
-    # una frontera de país, eso mezclaría series nacionales sin relación real).
-    # `limit_direction="both"` también resuelve los bordes: un año final aún no
-    # reportado (ej. 2025) se rellena con el último valor real conocido, no se
-    # inventa una tendencia -- una elección honesta, no una interpolación real.
+    # una frontera de país, eso mezclaría series nacionales sin relación real)
+    # Y dentro de cada lado del split train/test por separado -- nunca a
+    # través de esa frontera tampoco. Se corta el panel en train/test UNA vez
+    # acá y se interpola cada mitad de forma independiente, para que un hueco
+    # en un año de train jamás se rellene mirando un año de test (y viceversa).
+    # `limit_direction="both"` también resuelve los bordes dentro de cada
+    # mitad: el año final de train aún no reportado se rellena con el último
+    # valor real conocido DE TRAIN, no con el primer valor de test.
+    is_train = panel["year"] <= TRAIN_END_YEAR
+    train_slice, test_slice = panel.loc[is_train].copy(), panel.loc[~is_train].copy()
     for slug in INDICATOR_SLUGS:
-        panel = interpolate_within_group(panel, column=slug, group_column="country_iso3", sort_by="year")
+        train_slice = interpolate_within_group(train_slice, column=slug, group_column="country_iso3", sort_by="year")
+        test_slice = interpolate_within_group(test_slice, column=slug, group_column="country_iso3", sort_by="year")
+    panel = pd.concat([train_slice, test_slice]).sort_values(["country_iso3", "year"]).reset_index(drop=True)
 
     interpolated_missing = missingness_report(panel).set_index("columna")["pct_nulos"]
     report["missingness_tras_interpolar"] = interpolated_missing
@@ -73,8 +94,15 @@ def build_clean_panel() -> tuple[pd.DataFrame, dict]:
     # SIN NINGÚN valor real de ese indicador en toda la ventana -- interpolar
     # no puede resolverlo porque no hay ningún ancla dentro de la propia serie.
     # Se documenta el caso real antes de decidir: Perú e irrigación.
+    #
+    # El fallback (media condicional por país, con respaldo en la media
+    # global) se AJUSTA solo sobre train y se APLICA, ya congelado, sobre
+    # train y test por igual -- si se ajustara sobre el panel completo, la
+    # media global usada para rellenar una fila de train ya sabría el valor
+    # medio de años de test que en producción real todavía no existirían.
     still_missing = panel[INDICATOR_SLUGS].isna().sum()
     still_missing = still_missing[still_missing > 0]
+    is_train = panel["year"] <= TRAIN_END_YEAR  # recalculado: el concat de arriba resetea el índice
     fallback_detail: dict[str, dict] = {}
     for slug, n_missing in still_missing.items():
         countries_fully_missing = (
@@ -84,12 +112,8 @@ def build_clean_panel() -> tuple[pd.DataFrame, dict]:
             "celdas_sin_ancla_dentro_del_pais": int(n_missing),
             "paises_con_la_serie_completa_ausente": countries_fully_missing,
         }
-        # Fallback: media condicional por país. Si un país no tiene NINGÚN
-        # valor real (ej. Perú en irrigación), `impute_numeric_by_category`
-        # cae a la media global entre los 9 países -- un valor honesto pero
-        # deliberadamente burdo, documentado acá, no una interpolación
-        # disfrazada.
-        panel = impute_numeric_by_category(panel, value_column=slug, category_column="country_iso3")
+        stats = compute_category_means(panel.loc[is_train], value_column=slug, category_column="country_iso3")
+        panel = apply_category_means(panel, value_column=slug, category_column="country_iso3", stats=stats)
     report["fallback_media_por_pais"] = fallback_detail
 
     after_missing = missingness_report(panel)

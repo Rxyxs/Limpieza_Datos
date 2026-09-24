@@ -29,6 +29,12 @@ RAW_DIR = ROOT / "data" / "raw" / "consulting"
 PROCESSED_DIR = ROOT / "data" / "processed" / "consulting"
 WAREHOUSE_PATH = PROCESSED_DIR / "wdi_warehouse.duckdb"
 
+# Único límite train/test del dominio, definido acá (no en model.py) porque la
+# limpieza tiene que respetarlo tanto como el modelo: interpolar un hueco de
+# antes de este año usando un año de después sería fuga estadística. model.py
+# importa esta misma constante para su split.
+TRAIN_END_YEAR = 2010
+
 
 def build_warehouse() -> dict:
     report: dict = {}
@@ -64,8 +70,16 @@ def build_warehouse() -> dict:
     # ya produjo una fila NaN real por cada año sin publicación, y es
     # justamente esa fila la que hay que rellenar -- descartarla antes
     # convertiría este paso en un no-op.
+    #
+    # Y se interpola cada lado del split train/test por separado -- nunca a
+    # través de esa frontera tampoco: un hueco en un año de train no puede
+    # rellenarse mirando un año de test, o la limpieza filtraría información
+    # que en producción real todavía no existiría en ese momento.
     fact["serie_id"] = fact["country_code"] + "|" + fact["indicator_code"]
-    fact = interpolate_within_group(fact, column="valor", group_column="serie_id", sort_by="anio")
+    is_train = fact["anio"] <= TRAIN_END_YEAR
+    train_slice = interpolate_within_group(fact.loc[is_train], column="valor", group_column="serie_id", sort_by="anio")
+    test_slice = interpolate_within_group(fact.loc[~is_train], column="valor", group_column="serie_id", sort_by="anio")
+    fact = pd.concat([train_slice, test_slice]).sort_values(["serie_id", "anio"]).reset_index(drop=True)
     fact = fact.drop(columns=["serie_id"])
 
     after_missing = missingness_report(fact)

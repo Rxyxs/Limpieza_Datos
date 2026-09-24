@@ -21,6 +21,7 @@ import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from torch import nn
 
+from src.domains.consulting_excel_dwh.clean import TRAIN_END_YEAR
 from src.domains.consulting_excel_dwh.features import FEATURE_COLUMNS, TARGET_COLUMN
 from src.toolkit.encoding import inverse_zscore, zscore_scale
 from src.toolkit.model_zoo import build_sequences, fit_elasticnet, fit_lstm, fit_random_forest
@@ -58,7 +59,7 @@ class LifeExpectancyMLP(nn.Module):
         return self.net(x)
 
 
-def chronological_split(df: pd.DataFrame, train_end_year: int = 2010, val_end_year: int = 2018):
+def chronological_split(df: pd.DataFrame, train_end_year: int = TRAIN_END_YEAR, val_end_year: int = 2018):
     train_df = df[df["anio"] <= train_end_year]
     val_df = df[(df["anio"] > train_end_year) & (df["anio"] <= val_end_year)]
     test_df = df[df["anio"] > val_end_year]

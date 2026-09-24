@@ -18,7 +18,7 @@ import pandas as pd
 from src.toolkit.datetime_cleaning import reindex_to_full_calendar
 from src.toolkit.duplicates import exact_duplicate_report
 from src.toolkit.missing_data import missingness_report
-from src.toolkit.outliers import fix_implausible_level_jumps, winsorize_column
+from src.toolkit.outliers import clip_to_bounds, fix_implausible_level_jumps, iqr_bounds
 
 ROOT = Path(__file__).resolve().parents[3]
 RAW_DIR = ROOT / "data" / "raw" / "financial"
@@ -26,6 +26,12 @@ PROCESSED_DIR = ROOT / "data" / "processed" / "financial"
 
 DAILY_INDICATORS = ["dolar", "uf", "tpm"]
 MONTHLY_INDICATORS = ["ipc", "imacec"]
+
+# Misma fracción de train que usa model.py (chronological_split, train_frac
+# por defecto). Definida acá porque los límites IQR de la winsorización
+# tienen que respetar la misma frontera: calcularlos sobre el panel completo
+# dejaría que la volatilidad de test defina qué cuenta como atípico en train.
+TRAIN_FRAC = 0.70
 
 
 def _load_raw(codigo: str) -> pd.DataFrame:
@@ -80,7 +86,15 @@ def build_clean_panel() -> tuple[pd.DataFrame, dict]:
     price_ratio = panel["dolar"] / panel["dolar"].shift(1)
     panel["dolar_log_return"] = np.where(price_ratio > 0, np.log(price_ratio), np.nan)
     panel = panel.dropna(subset=["dolar_log_return"]).reset_index(drop=True)
-    panel, n_return_outliers = winsorize_column(panel, "dolar_log_return", k=4.0)
+
+    # Límites IQR AJUSTADOS solo sobre el primer TRAIN_FRAC del panel (ya
+    # ordenado por fecha) y APLICADOS, ya congelados, sobre el panel entero --
+    # si se ajustaran sobre todo el panel, la volatilidad de los retornos en
+    # el período de test correría hacia atrás y cambiaría qué cuenta como
+    # atípico en un día de train.
+    train_end_idx = int(len(panel) * TRAIN_FRAC)
+    train_lower, train_upper = iqr_bounds(panel["dolar_log_return"].iloc[:train_end_idx], k=4.0)
+    panel, n_return_outliers = clip_to_bounds(panel, "dolar_log_return", train_lower, train_upper)
     report["dolar_log_return_outliers_winsorizados"] = n_return_outliers
 
     after_missing = missingness_report(panel).set_index("columna")["pct_nulos"]

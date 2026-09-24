@@ -4,18 +4,54 @@ from __future__ import annotations
 import pandas as pd
 
 
+def compute_category_means(df: pd.DataFrame, value_column: str, category_column: str) -> dict:
+    """`fit`: aprende la media condicional por `category_column` (más la media
+    global como respaldo) a partir de `df`, sin modificar nada.
+
+    Separado de `apply_category_means` a propósito -- es lo que permite ajustar
+    estos estadísticos **solo** sobre el histórico/entrenamiento y aplicar los
+    mismos números, ya congelados, sobre datos que este `df` nunca vio (un
+    período de test posterior). Ver `impute_numeric_by_category` para el uso
+    conveniente de un solo paso cuando no hace falta esa separación.
+    """
+    return {
+        "category_means": df.groupby(category_column)[value_column].mean().to_dict(),
+        "global_mean": float(df[value_column].mean()),
+    }
+
+
+def apply_category_means(
+    df: pd.DataFrame, value_column: str, category_column: str, stats: dict,
+) -> pd.DataFrame:
+    """`transform`: rellena nulos en `value_column` con los estadísticos YA
+    APRENDIDOS por `compute_category_means` -- no recalcula nada a partir de
+    `df`, así que es seguro llamarla sobre un conjunto de test que nunca
+    participó del ajuste.
+
+    Una categoría presente en `df` pero ausente en `stats["category_means"]`
+    (una categoría nueva, no vista en el ajuste) cae directo a `global_mean`,
+    igual que una categoría sin ningún valor no nulo en el ajuste original.
+    """
+    df = df.copy()
+    mapped_means = df[category_column].map(stats["category_means"])
+    df[value_column] = df[value_column].fillna(mapped_means).fillna(stats["global_mean"])
+    return df
+
+
 def impute_numeric_by_category(df: pd.DataFrame, value_column: str, category_column: str) -> pd.DataFrame:
-    """Imputa nulos en `value_column` con la media condicional por `category_column`.
+    """Imputa nulos en `value_column` con la media condicional por `category_column`,
+    ajustando y aplicando sobre el mismo `df` en un solo paso.
 
     Si una categoría no tiene ningún valor no nulo, recurre a la media global de la
     columna. Útil cuando el valor esperado varía estructuralmente según un grupo
-    (ej. producción de cobre por empresa, costo de ticket por categoría).
+    (ej. producción de cobre por empresa, costo de ticket por categoría) **y no
+    hay una frontera train/test que respetar** -- si la hay, usar
+    `compute_category_means` sobre el histórico y `apply_category_means` sobre
+    ambos subconjuntos, como hacen los dominios de este repo que sí tienen esa
+    frontera.
     """
-    df = df.copy()
-    global_mean = df[value_column].mean()
-    category_means = df.groupby(category_column)[value_column].transform("mean")
-    df[value_column] = df[value_column].fillna(category_means).fillna(global_mean)
-    return df
+    stats = compute_category_means(df, value_column, category_column)
+    return apply_category_means(df, value_column, category_column, stats)
 
 
 def interpolate_numeric_column(df: pd.DataFrame, column: str, sort_by: str | None = None) -> pd.DataFrame:

@@ -42,6 +42,7 @@ import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from torch import nn
 
+from src.domains.agriculture_worldbank.clean import TRAIN_END_YEAR
 from src.domains.agriculture_worldbank.features import COUNTRY_COLUMNS, FEATURE_COLUMNS, TARGET_COLUMN
 from src.toolkit.encoding import zscore_scale
 from src.toolkit.model_zoo import build_sequences, fit_elasticnet, fit_lstm, fit_random_forest
@@ -56,7 +57,9 @@ REPORTS_DIR = ROOT / "outputs" / "agriculture"
 # solo el modelo) y haría incomparables los tamaños de train entre corridas.
 LSTM_WINDOW = 5
 
-TRAIN_END_YEAR = 2015
+# TRAIN_END_YEAR se importa de clean.py: es el mismo límite que ya respeta la
+# imputación (no hay dos números que puedan desincronizarse -- ver el
+# comentario en clean.py).
 VAL_END_YEAR = 2019
 
 

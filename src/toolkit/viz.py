@@ -7,6 +7,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import matplotlib
+
+# Agg (no interactivo, sin dependencia de Tk/GUI): este módulo solo escribe
+# PNGs a `output_path`, nunca abre una ventana -- forzar el backend evita que
+# la primera importación de pyplot elija TkAgg por defecto y falle en un
+# entorno sin Tcl/Tk correctamente instalado (o sin display, como CI). Tiene
+# que llamarse ANTES de importar pyplot, por eso está separado del resto de
+# los imports.
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd

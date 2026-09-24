@@ -16,27 +16,42 @@ def iqr_bounds(series: pd.Series, k: float = 1.5) -> tuple[float, float]:
     return q1 - k * iqr, q3 + k * iqr
 
 
-def winsorize_column(df: pd.DataFrame, column: str, k: float = 1.5) -> tuple[pd.DataFrame, int]:
-    """Recorta (winsoriza) `column` a los límites IQR de Tukey.
+def clip_to_bounds(df: pd.DataFrame, column: str, lower: float, upper: float) -> tuple[pd.DataFrame, int]:
+    """`transform`: recorta `column` a límites YA CALCULADOS (de `iqr_bounds`) --
+    no recalcula nada a partir de `df`, así que es seguro llamarla sobre un
+    conjunto de test que nunca participó del cálculo de esos límites.
 
-    Valores nulos se ignoran (no se cuentan como outliers, no se tocan) para no
-    pisar el trabajo de `missing_data`, que debería correr antes o después según
-    el pipeline -- este paso trata valores *presentes*.
-
+    Valores nulos se ignoran (no se cuentan como outliers, no se tocan).
     Devuelve `(df_modificado, n_valores_recortados)`.
     """
     df = df.copy()
     df[column] = df[column].astype("float64")  # el recorte puede producir no-enteros
+    non_null_mask = df[column].notna()
+    is_outlier = non_null_mask & ((df[column] < lower) | (df[column] > upper))
+    n_outliers = int(is_outlier.sum())
+
+    df.loc[non_null_mask, column] = df.loc[non_null_mask, column].clip(lower, upper)
+    return df, n_outliers
+
+
+def winsorize_column(df: pd.DataFrame, column: str, k: float = 1.5) -> tuple[pd.DataFrame, int]:
+    """Recorta (winsoriza) `column` a los límites IQR de Tukey, calculando y
+    aplicando esos límites sobre el mismo `df` en un solo paso.
+
+    Útil cuando no hay una frontera train/test que respetar -- si la hay, usar
+    `iqr_bounds` sobre el histórico y `clip_to_bounds` sobre ambos subconjuntos
+    con esos mismos límites, como hace `financial_bcch` en este repo.
+
+    Devuelve `(df_modificado, n_valores_recortados)`.
+    """
+    df = df.copy()
+    df[column] = df[column].astype("float64")
     non_null = df[column].dropna()
     if non_null.empty:
         return df, 0
 
     lower, upper = iqr_bounds(non_null, k=k)
-    is_outlier = df[column].notna() & ((df[column] < lower) | (df[column] > upper))
-    n_outliers = int(is_outlier.sum())
-
-    df.loc[df[column].notna(), column] = df.loc[df[column].notna(), column].clip(lower, upper)
-    return df, n_outliers
+    return clip_to_bounds(df, column, lower, upper)
 
 
 def winsorize_columns(df: pd.DataFrame, columns: list[str], k: float = 1.5) -> tuple[pd.DataFrame, dict[str, int]]:

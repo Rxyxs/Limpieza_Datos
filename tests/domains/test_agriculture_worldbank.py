@@ -186,7 +186,7 @@ def test_target_drift_explains_why_the_historical_mean_baseline_fails():
     from src.domains.agriculture_worldbank.model import chronological_split
     from src.toolkit.drift import drift_report, target_shift
 
-    features_df = pd.read_csv(PROCESSED_DIR / "agriculture_features.csv")
+    features_df = pd.read_csv(_require(PROCESSED_DIR / "agriculture_features.csv"))
     train_df, _val_df, test_df = chronological_split(features_df)
 
     desplazamiento = target_shift(train_df[TARGET_COLUMN], test_df[TARGET_COLUMN])
