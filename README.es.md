@@ -2,11 +2,13 @@
 
 # Limpieza_Datos
 
+[![CI](https://github.com/Rxyxs/Limpieza_Datos/actions/workflows/ci.yml/badge.svg)](https://github.com/Rxyxs/Limpieza_Datos/actions/workflows/ci.yml)
+
 Un **toolkit** reusable de limpieza de datos y modelamiento (`src/toolkit/`), probado contra **cuatro bases de datos reales e independientes** — sistema financiero chileno, minería del cobre chilena, agricultura sudamericana, y un Excel completo de 80MB del Banco Mundial transformado en un data warehouse real. Ninguna base de datos es sintética; todo modelo entrena al menos 100 épocas reales; cada técnica de limpieza vive una sola vez en el toolkit y se reusa, sin cambios, en los 4 dominios.
 
 Este es el tipo de trabajo real de una consultora de datos: traer datos reales y desordenados desde donde sea que vivan (una API REST, un reporte Excel institucional, un dump completo de un organismo estadístico), limpiarlos con técnicas generales y defendibles, chequear las afirmaciones de calidad que todos asumen y nadie mide, y entregar un modelo con resultados reportados honestamente — incluidos los negativos.
 
-**En números**: 18 módulos reusables en el toolkit · 4 pipelines independientes sobre datos reales · 6 familias de modelos comparadas por dominio bajo una misma regla de split cronológico · 190 tests, ninguno mockeado.
+**En números**: 18 módulos reusables en el toolkit · 4 pipelines independientes sobre datos reales · 6 familias de modelos comparadas por dominio bajo una misma regla de split cronológico · 199 tests (161 pasando, 38 saltados con gracia cuando este entorno no tiene los datos generados), ninguno mockeado, 0 fallos, corriendo en cada push vía CI.
 
 | | |
 |---|---|
@@ -70,7 +72,7 @@ flowchart TB
 | `sql_dump.py` | Dumps SQL (`.sql`) leídos y escritos sin levantar un motor de base de datos: corte de sentencias consciente de comillas, parseo de `CREATE TABLE` / `INSERT` multi-fila / `COPY ... FROM stdin` de `pg_dump`, inventario del dump sin materializarlo, y exportación por lotes a dialecto Postgres/MySQL/SQLite |
 | `json_normalizer.py` | Aplana una columna de JSON anidado a columnas tabulares, tolerando payloads inválidos o vacíos |
 | `encoding.py` | Codificación ordinal/one-hot, escalado z-score con transformación inversa |
-| `validation.py` | Validación de esquema fila por fila, genérica, vía pydantic |
+| `validation.py` | Validación de esquema fila por fila, genérica, vía pydantic, más `infer_schema`/`validate_schema` -- congela el `{columna: dtype}` de un set de entrenamiento y detecta drift de esquema contra datos nuevos: columnas faltantes, columnas inesperadas, y cambios silenciosos de tipo (ej. int → float apenas aparece un solo NaN) |
 | `viz.py` | 9 funciones de gráficos reusables (missingness antes/después, distribución antes/después, heatmap de correlación, matriz de confusión, comparación de modelos, diagnóstico de regresión, curva de entrenamiento, series de tiempo, funnel de ETL) |
 | `torch_trainer.py` | Un único loop de entrenamiento con early stopping (piso `min_epochs=100`, restauración del mejor checkpoint) usado por los modelos PyTorch de los 4 dominios |
 | `model_zoo.py` | Tres familias de modelos más, reusadas por los 4 dominios: lineal regularizado (Ridge/ElasticNet/Lasso, con la malla de `alpha` leída **relativa a la dispersión del target**, para que una sola malla signifique lo mismo sobre targets que van de 0,005 a 5.000), Random Forest (bagging, el contraste directo contra el boosting de XGBoost) y una LSTM sobre secuencias construidas **dentro de cada grupo** -- más la regla de selección que comparten los tres: ajustar en train, elegir en el split de validación cronológico, nunca con `GridSearchCV`, cuyo barajado por defecto entrenaría con filas posteriores a las que después evalúa |
@@ -461,7 +463,9 @@ Con seis modelos, el ranking ya no tiene un ganador único a nivel de proyecto: 
 pytest
 ```
 
-190 tests, todos reales (sin mocks): 148 pruebas unitarias del toolkit, más pruebas de humo reales por dominio (chequeos de esquema/plausibilidad contra datos efectivamente descargados, y el reclamo central de cada dominio -- ej. "el mejor modelo supera al baseline por un margen real" -- verificado como una aserción reproducible, no solo afirmado en este README).
+199 tests, todos reales (sin mocks): 157 pruebas unitarias del toolkit, más 42 pruebas de humo reales por dominio (chequeos de esquema/plausibilidad contra datos efectivamente descargados, y el reclamo central de cada dominio -- ej. "el mejor modelo supera al baseline por un margen real" -- verificado como una aserción reproducible, no solo afirmado en este README). 161 pasan incondicionalmente; 38 se saltan limpiamente (no fallan) cuando este entorno no tiene en disco los datos generados del dominio. Entre las pruebas del toolkit, los 4 dominios de datos reales están auditados directamente contra fuga estadística: se prueba que imputación, interpolación y winsorización IQR calculan sus estadísticos solo sobre train y los aplican, congelados, sobre test -- nunca al revés.
+
+CI corre el mismo comando en cada push y pull request contra `main` (Python 3.10, `MPLBACKEND=Agg`), así que esta afirmación no es solo "pasó una vez en mi máquina".
 
 ## Instalación y cómo correrlo de punta a punta
 
@@ -521,6 +525,18 @@ data/            en el gitignore: descargas crudas, CSVs procesados, warehouse D
 ## Stack
 
 Python · pandas · NumPy/SciPy · PyTorch · XGBoost · scikit-learn · DuckDB · openpyxl · rapidfuzz · pydantic · matplotlib/seaborn · Jupyter · mindicador.cl · COCHILCO · World Bank Open Data / WDI
+
+## Checklist de preparación para producción
+
+Lo que está realmente verificado a fecha de este commit -- cada fila enlaza a dónde se chequea, no solo se afirma:
+
+| | Ítem | Evidencia |
+|---|---|---|
+| ✅ | CI automatizado (GitHub Actions, Python 3.10, `MPLBACKEND=Agg` headless) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) -- corre `pytest -v` en cada push/PR a `main`; badge arriba de esta página |
+| ✅ | Sin fuga estadística (imputación, interpolación y winsorización ajustadas solo en train) | `tests/toolkit/test_preprocessing_leakage.py`; refactorizado en `agriculture_worldbank`, `consulting_excel_dwh` y `financial_bcch` vía `compute_category_means`/`apply_category_means` y `clip_to_bounds` |
+| ✅ | Frontera de split definida una sola vez por dominio (única fuente de verdad) | `TRAIN_END_YEAR` / `TRAIN_FRAC` declarados en el `clean.py` de cada dominio, importados por su `model.py` -- limpieza y modelado no pueden desincronizarse |
+| ✅ | Detección de schema drift (columnas faltantes/inesperadas, cambios silenciosos de tipo) | `src/toolkit/validation.py::infer_schema` / `validate_schema`, `tests/toolkit/test_validation.py` |
+| ✅ | Suite de tests con 0 fallos (los huecos de entorno saltan limpio, no fallan) | 199 tests -- 161 pasados, 38 saltados, 0 fallidos; ver [Tests](#tests) arriba |
 
 ## Autor
 
