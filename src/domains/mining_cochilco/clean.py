@@ -170,7 +170,7 @@ def build_clean_panel() -> tuple[pd.DataFrame, dict]:
     # tiene tendencia genuina (ley del mineral que declina, expansiones,
     # huelgas, mantenciones programadas) -- un k agresivo trataría esa
     # variación operacional real como si fuera un error de captura.
-    # Nota sobre fuga estadística (auditoría del Día 22/23): esta llamada usa
+    # Nota sobre fuga estadística (de mi propia auditoría): esta llamada usa
     # límites IQR calculados sobre TODO el panel, incluido el período que
     # después será test en model.py -- pero, a diferencia de la winsorización
     # de financial_bcch, el DataFrame recortado se descarta (`_`): ninguna

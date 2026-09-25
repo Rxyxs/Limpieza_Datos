@@ -1,9 +1,9 @@
-"""Día 22 -- auditoría de fuga estadística (distinta de la fuga de target que
-ya cubre `test_leakage.py`): ¿los parámetros con los que se limpia/imputa/
-escala un dato dependen de información que, en un split cronológico real, no
-estaría disponible todavía?
+"""Auditoría de fuga estadística (distinta de la fuga de target que ya cubre
+`test_leakage.py`): ¿los parámetros con los que se limpia/imputa/escala un
+dato dependen de información que, en un split cronológico real, no estaría
+disponible todavía?
 
-Hallazgo del Día 22, probado acá con números, no solo leído en el código:
+Encontré, y probé acá con números, no solo leyendo el código:
 `impute_numeric_by_category`, `interpolate_within_group` y `winsorize_column*`
 son funciones puras y sin estado -- recalculan sus estadísticos (media,
 mediana condicional, cuantiles IQR) directamente sobre el DataFrame que se les
@@ -12,18 +12,17 @@ tienen ningún mecanismo de "ajustar sobre train, aplicar sobre test" -- a
 diferencia de `zscore_scale`, que sí devuelve sus estadísticos aprendidos para
 poder reutilizarlos.
 
-En este repo, `agriculture_worldbank/clean.py` y `consulting_excel_dwh/
-clean.py` llaman `interpolate_within_group`/`impute_numeric_by_category`
+Encontré que `agriculture_worldbank/clean.py` y `consulting_excel_dwh/
+clean.py` llamaban `interpolate_within_group`/`impute_numeric_by_category`
 sobre el panel completo, ANTES del split cronológico que corre después en
-`model.py`. El resultado: un hueco en el período de entrenamiento puede
-quedar interpolado usando valores del período de test. Es una fuga real,
-aunque mucho más chica que una fuga de target -- no se está filtrando la
-respuesta, se está filtrando "cuánto va a valer esta columna más adelante"
-hacia una fila de entrenamiento que, en producción real, nunca lo habría
-sabido.
-
-No se toca el pipeline hoy (restricción del Día 22: sin reescrituras
-masivas). Estos tests documentan el comportamiento actual -- tanto el que
+`model.py`. El resultado: un hueco en el período de entrenamiento podía
+quedar interpolado usando valores del período de test. Era una fuga real,
+aunque mucho más chica que una fuga de target -- no se filtraba la
+respuesta, se filtraba "cuánto va a valer esta columna más adelante" hacia
+una fila de entrenamiento que, en producción real, nunca lo habría sabido.
+Ya corregí ambos dominios (ver `TRAIN_END_YEAR`/`TRAIN_FRAC` en cada
+`clean.py`, importados por su `model.py` como única fuente de verdad del
+corte); estos tests siguen documentando el comportamiento -- tanto el que
 filtra como el que no -- para que un cambio futuro se note como un test que
 cambia, no como una sorpresa.
 """
