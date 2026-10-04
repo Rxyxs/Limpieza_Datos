@@ -35,5 +35,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # La suite se divide en dos y conviene saberlo al leer este log:
+      #
+      #   tests/toolkit/  (181) son autocontenidos -- construyen sus datos en el
+      #     propio test, asi que corren enteros en un checkout limpio.
+      #   tests/domains/   (42) son smoke tests contra los datos publicos reales
+      #     ya descargados y procesados. Esos archivos no se versionan, asi que
+      #     cada modulo lleva pytest.mark.skipif(not RAW_PATH.exists()) y aca se
+      #     SALTAN -- el runner nunca los tiene.
+      #
+      # Un badge verde significa "pasan los 181 del toolkit", no "pasan los 223".
+      # Los 42 restantes se corren en local despues de fetch -> clean -> features
+      # -> model, que es lo que documenta el README.
       - name: Run test suite
         run: python -m pytest -v

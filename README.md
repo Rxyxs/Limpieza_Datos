@@ -8,7 +8,7 @@ A reusable data-cleaning-and-modeling **toolkit** (`src/toolkit/`), proven again
 
 This is the kind of work a data consultancy actually does: pull messy real data from wherever it lives (a REST API, an institutional Excel report, a full statistical-agency data dump), clean it with defensible, general techniques, check the data quality claims that everyone assumes and nobody measures, and ship a model with honestly-reported results — including the negative ones.
 
-**In numbers**: 18 reusable toolkit modules · 4 independent real-data pipelines · 6 model families compared per domain under one chronological-split rule · 199 tests (161 passing, 38 gracefully skipped when this environment's generated data isn't present), none of them mocked, 0 failures, running on every push via CI.
+**In numbers**: 18 reusable toolkit modules · 4 independent real-data pipelines · 6 model families compared per domain under one chronological-split rule · 223 tests (181 passing, 42 gracefully skipped when this environment's generated data isn't present), none of them mocked, 0 failures, running on every push via CI.
 
 | | |
 |---|---|
@@ -457,7 +457,7 @@ With six models the ranking no longer has a single winner across the project: **
 pytest
 ```
 
-199 tests, all real (no mocks): 157 unit tests on the toolkit itself, plus 42 real smoke tests per domain (schema/plausibility checks against actually-downloaded data, and each domain's central claim — e.g. "the best model beats the baseline by a real margin" — verified as a reproducible assertion, not just stated in this README). 161 pass unconditionally; 38 skip cleanly (not fail) when this environment doesn't have the domain's generated data on disk. Among the toolkit tests, all 4 real-data domains are directly audited against statistical leakage: imputation, interpolation and IQR winsorization are proven to compute their statistics on train only and apply them, frozen, to test — never the reverse.
+223 tests, all real (no mocks): 181 unit tests on the toolkit itself, plus 42 real smoke tests per domain (schema/plausibility checks against actually-downloaded data, and each domain's central claim — e.g. "the best model beats the baseline by a real margin" — verified as a reproducible assertion, not just stated in this README). 181 pass unconditionally; 42 skip cleanly (not fail) when this environment doesn't have the domain's generated data on disk. That is exactly what CI reports, since the runner never has that data: a green badge here means the 181 toolkit tests pass, not all 223. Among the toolkit tests, all 4 real-data domains are directly audited against statistical leakage: imputation, interpolation and IQR winsorization are proven to compute their statistics on train only and apply them, frozen, to test — never the reverse.
 
 CI runs the same command on every push and pull request against `main` (Python 3.10, `MPLBACKEND=Agg`), so this claim isn't just "it passed once on my machine."
 
@@ -531,7 +531,7 @@ What's actually verified as of this commit — each row links to where it's chec
 | ✅ | No statistical leakage (imputation, interpolation and winsorization fit on train only) | `tests/toolkit/test_preprocessing_leakage.py`; refactored in `agriculture_worldbank`, `consulting_excel_dwh` and `financial_bcch`'s `clean.py` via `compute_category_means`/`apply_category_means` and `clip_to_bounds` |
 | ✅ | Split boundary defined once per domain (single source of truth) | `TRAIN_END_YEAR` / `TRAIN_FRAC` declared in each domain's `clean.py`, imported by its `model.py` — cleaning and modeling can't drift apart |
 | ✅ | Schema-drift detection (missing/unexpected columns, silent dtype changes) | `src/toolkit/validation.py::infer_schema` / `validate_schema`, `tests/toolkit/test_validation.py` |
-| ✅ | Test suite passes with 0 failures (environment gaps skip cleanly, they don't fail) | 199 tests — 161 passed, 38 skipped, 0 failed; see [Tests](#tests) above |
+| ✅ | Test suite passes with 0 failures (environment gaps skip cleanly, they don't fail) | 223 tests — 181 passed, 42 skipped, 0 failed; see [Tests](#tests) above |
 
 ## Author
 
