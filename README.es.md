@@ -1,8 +1,8 @@
 [ 🇺🇸 [Read in English](README.md) ] | [ 🇨🇱 Español ]
 
-# Limpieza_Datos
+# data-cleaning-toolkit
 
-[![CI](https://github.com/Rxyxs/Limpieza_Datos/actions/workflows/ci.yml/badge.svg)](https://github.com/Rxyxs/Limpieza_Datos/actions/workflows/ci.yml)
+[![CI](https://github.com/Rxyxs/data-cleaning-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Rxyxs/data-cleaning-toolkit/actions/workflows/ci.yml)
 
 Un **toolkit** reusable de limpieza de datos y modelamiento (`src/toolkit/`), probado contra **cuatro bases de datos reales e independientes** — sistema financiero chileno, minería del cobre chilena, agricultura sudamericana, y un Excel completo de 80MB del Banco Mundial transformado en un data warehouse real. Ninguna base de datos es sintética; todo modelo entrena al menos 100 épocas reales; cada técnica de limpieza vive una sola vez en el toolkit y se reusa, sin cambios, en los 4 dominios.
 
